@@ -1,4 +1,4 @@
-from flask import request, jsonify
+from flask import request
 from flask_restx import Namespace, Resource, fields
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from models import (
@@ -6,8 +6,11 @@ from models import (
     ChatMessage, ChatMessageReceipt, User, Provider
 )
 from datetime import datetime
-from sqlalchemy import and_, or_, desc, asc
-from sqlalchemy.orm import aliased
+from sqlalchemy import and_, or_, desc
+from utils.upload import upload_file_to_r2
+import os
+from PIL import Image
+import tempfile
 
 # Create namespace
 chat_ns = Namespace('chat', description='Chat operations')
@@ -33,7 +36,14 @@ message_model = chat_ns.model('ChatMessage', {
     'sender_name': fields.String(description='Sender display name'),
     'message_type': fields.String(description='Message type'),
     'body': fields.String(description='Message body'),
+    'attachment_path': fields.String(description='Attachment file path'),
     'attachment_url': fields.String(description='Attachment URL'),
+    'attachment_mime': fields.String(description='MIME type of attachment'),
+    'attachment_size': fields.Integer(description='File size in bytes'),
+    'attachment_duration_ms': fields.Integer(description='Duration in milliseconds (audio/video)'),
+    'attachment_width': fields.Integer(description='Width in pixels (image/video)'),
+    'attachment_height': fields.Integer(description='Height in pixels (image/video)'),
+    'thumbnail_path': fields.String(description='Thumbnail file path'),
     'created_at': fields.DateTime(description='Message timestamp'),
     'is_read': fields.Boolean(description='Whether message is read by current user')
 })
@@ -50,9 +60,16 @@ conversation_model = chat_ns.model('ChatConversation', {
 })
 
 send_message_model = chat_ns.model('SendMessage', {
-    'message_type': fields.String(required=True, description='Message type (text/image/file)', enum=['text', 'image', 'file']),
+    'message_type': fields.String(required=True, description='Message type', enum=['text', 'image', 'video', 'audio', 'file', 'system']),
     'body': fields.String(description='Message body (required for text messages)'),
-    'attachment_url': fields.String(description='Attachment URL (for image/file messages)')
+    'attachment_path': fields.String(description='Attachment file path'),
+    'attachment_url': fields.String(description='Attachment URL'),
+    'attachment_mime': fields.String(description='MIME type of attachment'),
+    'attachment_size': fields.Integer(description='File size in bytes'),
+    'attachment_duration_ms': fields.Integer(description='Duration in milliseconds (audio/video)'),
+    'attachment_width': fields.Integer(description='Width in pixels (image/video)'),
+    'attachment_height': fields.Integer(description='Height in pixels (image/video)'),
+    'thumbnail_path': fields.String(description='Thumbnail file path')
 })
 
 create_conversation_model = chat_ns.model('CreateConversation', {
@@ -60,6 +77,21 @@ create_conversation_model = chat_ns.model('CreateConversation', {
     'participant_type': fields.String(required=True, description='Type of participant', enum=['user', 'provider']),
     'is_group': fields.Boolean(description='Is group conversation', default=False),
     'title': fields.String(description='Conversation title (for group chats)')
+})
+
+file_upload_response_model = chat_ns.model('FileUploadResponse', {
+    'success': fields.Boolean(description='Upload success status'),
+    'url': fields.String(description='Public URL of uploaded file'),
+    'attachment_path': fields.String(description='Server path of uploaded file'),
+    'filename': fields.String(description='Generated filename'),
+    'original_filename': fields.String(description='Original filename'),
+    'mime_type': fields.String(description='MIME type of file'),
+    'file_size': fields.Integer(description='File size in bytes'),
+    'width': fields.Integer(description='Width for images/videos'),
+    'height': fields.Integer(description='Height for images/videos'),
+    'duration_ms': fields.Integer(description='Duration for audio/videos'),
+    'thumbnail_url': fields.String(description='Thumbnail URL for media files'),
+    'error': fields.String(description='Error message if upload failed')
 })
 
 # Helper functions
@@ -99,6 +131,57 @@ def check_conversation_access(conversation_id, actor_id):
         actor_id=actor_id
     ).first()
     return participant is not None
+
+def get_file_mime_type(filename):
+    """Get MIME type from filename extension"""
+    extension = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
+    mime_types = {
+        'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png',
+        'gif': 'image/gif', 'webp': 'image/webp', 'bmp': 'image/bmp',
+        'mp4': 'video/mp4', 'avi': 'video/avi', 'mov': 'video/quicktime',
+        'wmv': 'video/x-ms-wmv', 'flv': 'video/x-flv', 'webm': 'video/webm',
+        'mp3': 'audio/mpeg', 'wav': 'audio/wav', 'ogg': 'audio/ogg',
+        'aac': 'audio/aac', 'm4a': 'audio/mp4', 'flac': 'audio/flac',
+        'pdf': 'application/pdf', 'doc': 'application/msword',
+        'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'txt': 'text/plain', 'zip': 'application/zip'
+    }
+    return mime_types.get(extension, 'application/octet-stream')
+
+def get_message_type_from_mime(mime_type):
+    """Determine message type from MIME type"""
+    if mime_type.startswith('image/'):
+        return 'image'
+    elif mime_type.startswith('video/'):
+        return 'video'
+    elif mime_type.startswith('audio/'):
+        return 'audio'
+    else:
+        return 'file'
+
+def create_thumbnail(file_path, output_path, max_size=(200, 200)):
+    """Create thumbnail for image files"""
+    try:
+        with Image.open(file_path) as img:
+            # Convert to RGB if necessary (for PNG with transparency)
+            if img.mode in ('RGBA', 'LA', 'P'):
+                img = img.convert('RGB')
+
+            # Create thumbnail
+            img.thumbnail(max_size, Image.Resampling.LANCZOS)
+            img.save(output_path, 'JPEG', quality=85, optimize=True)
+            return True
+    except Exception as e:
+        print(f"Thumbnail creation failed: {e}")
+        return False
+
+def get_image_dimensions(file_path):
+    """Get image dimensions"""
+    try:
+        with Image.open(file_path) as img:
+            return img.size  # (width, height)
+    except:
+        return None, None
 
 # Routes
 @chat_ns.route('/conversations')
@@ -178,7 +261,14 @@ class ConversationList(Resource):
                         'sender_name': sender_name,
                         'message_type': last_message.message_type,
                         'body': last_message.body,
+                        'attachment_path': last_message.attachment_path,
                         'attachment_url': last_message.attachment_url,
+                        'attachment_mime': last_message.attachment_mime,
+                        'attachment_size': last_message.attachment_size,
+                        'attachment_duration_ms': last_message.attachment_duration_ms,
+                        'attachment_width': last_message.attachment_width,
+                        'attachment_height': last_message.attachment_height,
+                        'thumbnail_path': last_message.thumbnail_path,
                         'created_at': last_message.created_at,
                         'is_read': receipt is not None and receipt.read_at is not None
                     }
@@ -218,7 +308,7 @@ class ConversationList(Resource):
 
     @chat_ns.doc(security='Bearer')
     @chat_ns.expect(create_conversation_model)
-    @chat_ns.marshal_with(conversation_model, code=201)
+    @chat_ns.response(201, 'Conversation created', conversation_model)
     @chat_ns.response(400, 'Bad Request', error_model)
     @chat_ns.response(401, 'Unauthorized', error_model)
     @jwt_required()
@@ -226,6 +316,20 @@ class ConversationList(Resource):
         """Create a new conversation"""
         try:
             data = request.get_json()
+
+            # Validate required fields
+            if not data:
+                chat_ns.abort(400, 'Request body is required')
+
+            if 'participant_id' not in data:
+                chat_ns.abort(400, 'participant_id is required')
+
+            if 'participant_type' not in data:
+                chat_ns.abort(400, 'participant_type is required')
+
+            if data['participant_type'] not in ['user', 'provider']:
+                chat_ns.abort(400, 'participant_type must be either "user" or "provider"')
+
             current_identity = get_jwt_identity()
             user_type = current_identity.get('user_type')
             user_id = current_identity['user_id']
@@ -255,7 +359,7 @@ class ConversationList(Resource):
             ).first()
 
             if existing_conv:
-                return {'error': 'Conversation already exists'}, 400
+                chat_ns.abort(400, 'Conversation already exists')
 
             # Create new conversation
             conversation = ChatConversation(
@@ -303,7 +407,7 @@ class ConversationList(Resource):
 
         except Exception as e:
             db.session.rollback()
-            return {'error': f'Failed to create conversation: {str(e)}'}, 500
+            chat_ns.abort(500, f'Failed to create conversation: {str(e)}')
 
 @chat_ns.route('/conversations/<int:conversation_id>/messages')
 class MessageList(Resource):
@@ -361,7 +465,14 @@ class MessageList(Resource):
                     'sender_name': sender_name,
                     'message_type': msg.message_type,
                     'body': msg.body,
+                    'attachment_path': msg.attachment_path,
                     'attachment_url': msg.attachment_url,
+                    'attachment_mime': msg.attachment_mime,
+                    'attachment_size': msg.attachment_size,
+                    'attachment_duration_ms': msg.attachment_duration_ms,
+                    'attachment_width': msg.attachment_width,
+                    'attachment_height': msg.attachment_height,
+                    'thumbnail_path': msg.thumbnail_path,
                     'created_at': msg.created_at,
                     'is_read': receipt is not None and receipt.read_at is not None
                 })
@@ -416,8 +527,8 @@ class MessageList(Resource):
             if data['message_type'] == 'text' and not data.get('body'):
                 return {'error': 'body is required for text messages'}, 400
 
-            if data['message_type'] in ['image', 'file'] and not data.get('attachment_url'):
-                return {'error': 'attachment_url is required for image/file messages'}, 400
+            if data['message_type'] in ['image', 'video', 'audio', 'file'] and not (data.get('attachment_url') or data.get('attachment_path')):
+                return {'error': 'attachment_url or attachment_path is required for media messages'}, 400
 
             # Get current user's actor
             actor = get_or_create_actor(
@@ -436,7 +547,14 @@ class MessageList(Resource):
                 sender_id=actor.id,
                 message_type=data['message_type'],
                 body=data.get('body'),
-                attachment_url=data.get('attachment_url')
+                attachment_path=data.get('attachment_path'),
+                attachment_url=data.get('attachment_url'),
+                attachment_mime=data.get('attachment_mime'),
+                attachment_size=data.get('attachment_size'),
+                attachment_duration_ms=data.get('attachment_duration_ms'),
+                attachment_width=data.get('attachment_width'),
+                attachment_height=data.get('attachment_height'),
+                thumbnail_path=data.get('thumbnail_path')
             )
             db.session.add(message)
             db.session.flush()
@@ -465,7 +583,14 @@ class MessageList(Resource):
                 'sender_name': sender_name,
                 'message_type': message.message_type,
                 'body': message.body,
+                'attachment_path': message.attachment_path,
                 'attachment_url': message.attachment_url,
+                'attachment_mime': message.attachment_mime,
+                'attachment_size': message.attachment_size,
+                'attachment_duration_ms': message.attachment_duration_ms,
+                'attachment_width': message.attachment_width,
+                'attachment_height': message.attachment_height,
+                'thumbnail_path': message.thumbnail_path,
                 'created_at': message.created_at,
                 'is_read': True
             }, 201
@@ -591,3 +716,350 @@ class ConversationDetail(Resource):
 
         except Exception as e:
             return {'error': f'Failed to get conversation: {str(e)}'}, 500
+
+@chat_ns.route('/upload')
+class ChatFileUpload(Resource):
+    @chat_ns.doc(security='Bearer')
+    @chat_ns.marshal_with(file_upload_response_model, code=200)
+    @chat_ns.response(400, 'Bad Request', error_model)
+    @chat_ns.response(401, 'Unauthorized', error_model)
+    @jwt_required()
+    def post(self):
+        """Upload a file for chat attachment"""
+        try:
+            current_identity = get_jwt_identity()
+            user_type = current_identity.get('user_type')
+            user_id = current_identity['user_id']
+
+            # Check if file is present
+            if 'file' not in request.files:
+                return {'success': False, 'error': 'No file provided'}, 400
+
+            file = request.files['file']
+            if file.filename == '':
+                return {'success': False, 'error': 'No file selected'}, 400
+
+            # Get MIME type and message type
+            mime_type = get_file_mime_type(file.filename)
+            message_type = get_message_type_from_mime(mime_type)
+
+            # Get file size
+            file.seek(0, os.SEEK_END)
+            file_size = file.tell()
+            file.seek(0)
+
+            # Upload to R2 with appropriate folder
+            folder = f'chat-{message_type}s'  # chat-images, chat-videos, etc.
+            prefix = f'{user_type}_{user_id}'
+
+            upload_result = upload_file_to_r2(file, folder, prefix)
+
+            if not upload_result['success']:
+                return {
+                    'success': False,
+                    'error': upload_result['error']
+                }, 400
+
+            response_data = {
+                'success': True,
+                'url': upload_result['url'],
+                'attachment_path': f"{folder}/{upload_result['filename']}",
+                'filename': upload_result['filename'],
+                'original_filename': upload_result['original_filename'],
+                'mime_type': mime_type,
+                'file_size': file_size
+            }
+
+            # Process images for dimensions and thumbnails
+            if message_type == 'image':
+                # Reset file pointer
+                file.seek(0)
+
+                # Create temporary file to process
+                with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{file.filename.rsplit(".", 1)[-1]}') as temp_file:
+                    file.save(temp_file.name)
+
+                    # Get dimensions
+                    width, height = get_image_dimensions(temp_file.name)
+                    if width and height:
+                        response_data['width'] = width
+                        response_data['height'] = height
+
+                    # Create thumbnail
+                    thumbnail_temp = tempfile.NamedTemporaryFile(delete=False, suffix='.jpg')
+                    if create_thumbnail(temp_file.name, thumbnail_temp.name):
+                        # Upload thumbnail
+                        with open(thumbnail_temp.name, 'rb') as thumb_file:
+                            thumb_upload = upload_file_to_r2(
+                                thumb_file,
+                                'chat-thumbnails',
+                                f'{prefix}_thumb'
+                            )
+                            if thumb_upload['success']:
+                                response_data['thumbnail_url'] = thumb_upload['url']
+
+                    # Cleanup temp files
+                    os.unlink(temp_file.name)
+                    os.unlink(thumbnail_temp.name)
+
+            return response_data, 200
+
+        except Exception as e:
+            return {
+                'success': False,
+                'error': f'Upload failed: {str(e)}'
+            }, 500
+
+@chat_ns.route('/websocket/docs')
+class WebSocketDocs(Resource):
+    def get(self):
+        """WebSocket Events Documentation"""
+        return {
+            "websocket_url": "ws://localhost:9078",
+            "connection": {
+                "url": "ws://localhost:9078",
+                "auth": {
+                    "method": "token",
+                    "description": "Include JWT token in auth parameter when connecting",
+                    "example": {
+                        "auth": {
+                            "token": "your-jwt-token-here"
+                        }
+                    }
+                }
+            },
+            "events": {
+                "client_to_server": {
+                    "connect": {
+                        "description": "Authenticate and connect to chat server",
+                        "parameters": {
+                            "auth": {
+                                "token": "JWT token from login"
+                            }
+                        },
+                        "example": "socket.io('ws://localhost:9078', { auth: { token: 'your-jwt-token' } })"
+                    },
+                    "join_conversation": {
+                        "description": "Join a conversation room to receive messages",
+                        "parameters": {
+                            "conversation_id": "ID of conversation to join"
+                        },
+                        "example": "socket.emit('join_conversation', { conversation_id: 123 })"
+                    },
+                    "leave_conversation": {
+                        "description": "Leave a conversation room",
+                        "parameters": {
+                            "conversation_id": "ID of conversation to leave"
+                        },
+                        "example": "socket.emit('leave_conversation', { conversation_id: 123 })"
+                    },
+                    "send_message": {
+                        "description": "Send a text message to a conversation",
+                        "parameters": {
+                            "conversation_id": "Target conversation ID",
+                            "message_type": "Message type (text/image/video/audio/file)",
+                            "body": "Message content (required for text)",
+                            "attachment_path": "Server path for media files",
+                            "attachment_url": "Public URL for media files",
+                            "attachment_mime": "MIME type of attachment",
+                            "attachment_size": "File size in bytes",
+                            "attachment_width": "Image/video width",
+                            "attachment_height": "Image/video height",
+                            "attachment_duration_ms": "Audio/video duration",
+                            "thumbnail_path": "Thumbnail URL for media"
+                        },
+                        "example": "socket.emit('send_message', { conversation_id: 123, message_type: 'text', body: 'Hello!' })"
+                    },
+                    "send_message_with_file": {
+                        "description": "Send a message with file attachment (use after uploading via REST API)",
+                        "parameters": {
+                            "conversation_id": "Target conversation ID",
+                            "body": "Optional message text",
+                            "file_data": "File data object from upload endpoint"
+                        },
+                        "example": "socket.emit('send_message_with_file', { conversation_id: 123, body: 'Check this out!', file_data: uploadResult })"
+                    },
+                    "typing_start": {
+                        "description": "Indicate user started typing",
+                        "parameters": {
+                            "conversation_id": "Target conversation ID"
+                        },
+                        "example": "socket.emit('typing_start', { conversation_id: 123 })"
+                    },
+                    "typing_stop": {
+                        "description": "Indicate user stopped typing",
+                        "parameters": {
+                            "conversation_id": "Target conversation ID"
+                        },
+                        "example": "socket.emit('typing_stop', { conversation_id: 123 })"
+                    },
+                    "mark_message_read": {
+                        "description": "Mark a specific message as read",
+                        "parameters": {
+                            "conversation_id": "Target conversation ID",
+                            "message_id": "ID of message to mark as read"
+                        },
+                        "example": "socket.emit('mark_message_read', { conversation_id: 123, message_id: 456 })"
+                    }
+                },
+                "server_to_client": {
+                    "connected": {
+                        "description": "Confirmation of successful connection",
+                        "data": {
+                            "message": "Connected to chat server"
+                        }
+                    },
+                    "joined_conversation": {
+                        "description": "Confirmation of joining conversation",
+                        "data": {
+                            "conversation_id": "The conversation ID",
+                            "message": "Joined conversation {id}"
+                        }
+                    },
+                    "left_conversation": {
+                        "description": "Confirmation of leaving conversation",
+                        "data": {
+                            "conversation_id": "The conversation ID",
+                            "message": "Left conversation {id}"
+                        }
+                    },
+                    "new_message": {
+                        "description": "New message received in conversation",
+                        "data": {
+                            "id": "Message ID",
+                            "conversation_id": "Conversation ID",
+                            "sender_id": "Sender actor ID",
+                            "sender_name": "Sender display name",
+                            "message_type": "Message type",
+                            "body": "Message content",
+                            "attachment_url": "Media file URL",
+                            "attachment_mime": "MIME type",
+                            "attachment_size": "File size",
+                            "created_at": "ISO timestamp",
+                            "is_read": "Read status"
+                        }
+                    },
+                    "message_sent": {
+                        "description": "Confirmation that message was sent",
+                        "data": {
+                            "message_id": "ID of sent message",
+                            "conversation_id": "Target conversation",
+                            "status": "sent",
+                            "message_type": "Type of message sent"
+                        }
+                    },
+                    "user_joined": {
+                        "description": "Another user joined the conversation",
+                        "data": {
+                            "user_id": "User ID",
+                            "user_type": "user or provider",
+                            "conversation_id": "Conversation ID"
+                        }
+                    },
+                    "user_left": {
+                        "description": "Another user left the conversation",
+                        "data": {
+                            "user_id": "User ID",
+                            "user_type": "user or provider",
+                            "conversation_id": "Conversation ID"
+                        }
+                    },
+                    "user_typing": {
+                        "description": "Another user is typing or stopped typing",
+                        "data": {
+                            "user_id": "User ID",
+                            "user_type": "user or provider",
+                            "conversation_id": "Conversation ID",
+                            "typing": "true/false"
+                        }
+                    },
+                    "message_read": {
+                        "description": "Someone read a message",
+                        "data": {
+                            "message_id": "Message ID",
+                            "conversation_id": "Conversation ID",
+                            "reader_id": "Reader user ID",
+                            "reader_type": "user or provider",
+                            "read_at": "ISO timestamp"
+                        }
+                    },
+                    "message_marked_read": {
+                        "description": "Confirmation of marking message as read",
+                        "data": {
+                            "message_id": "Message ID",
+                            "conversation_id": "Conversation ID"
+                        }
+                    },
+                    "error": {
+                        "description": "Error occurred",
+                        "data": {
+                            "message": "Error description"
+                        }
+                    }
+                }
+            },
+            "workflow": {
+                "file_upload": {
+                    "description": "Complete workflow for sending files",
+                    "steps": [
+                        "1. Upload file via POST /api/chat/upload",
+                        "2. Get file data response with URLs and metadata",
+                        "3. Send message via WebSocket using 'send_message_with_file' event",
+                        "4. Include file_data from step 2 in the WebSocket payload"
+                    ]
+                },
+                "basic_messaging": {
+                    "description": "Basic messaging workflow",
+                    "steps": [
+                        "1. Connect to WebSocket with JWT token",
+                        "2. Join conversation using 'join_conversation'",
+                        "3. Send messages using 'send_message'",
+                        "4. Listen for 'new_message' events",
+                        "5. Mark messages as read using 'mark_message_read'"
+                    ]
+                }
+            },
+            "examples": {
+                "javascript_client": """
+// Connect to WebSocket
+const socket = io('ws://localhost:9078', {
+  auth: { token: 'your-jwt-token' }
+});
+
+// Join conversation
+socket.emit('join_conversation', { conversation_id: 123 });
+
+// Send text message
+socket.emit('send_message', {
+  conversation_id: 123,
+  message_type: 'text',
+  body: 'Hello everyone!'
+});
+
+// Listen for new messages
+socket.on('new_message', (message) => {
+  console.log('New message:', message);
+});
+
+// Send file message (after uploading via REST API)
+socket.emit('send_message_with_file', {
+  conversation_id: 123,
+  body: 'Check out this image!',
+  file_data: uploadResponse
+});
+
+// Typing indicators
+socket.emit('typing_start', { conversation_id: 123 });
+setTimeout(() => {
+  socket.emit('typing_stop', { conversation_id: 123 });
+}, 3000);
+                """.strip()
+            }
+        }, 200
+
+# ========== WEBSOCKET EVENTS ==========
+
+def init_socketio(socket_instance):
+    """Initialize socketio instance and register event handlers"""
+    from routes.chat_websocket import init_socketio_events
+    init_socketio_events(socket_instance)

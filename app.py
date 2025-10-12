@@ -2,6 +2,7 @@ from flask import Flask
 from flask_restx import Api
 from flask_jwt_extended import JWTManager
 from flask_cors import CORS
+from flask_socketio import SocketIO
 from dotenv import load_dotenv
 from urllib.parse import quote_plus
 import os
@@ -24,8 +25,19 @@ app.config['R2_SECRET_KEY'] = os.getenv('r2_secret_key')
 app.config['R2_ENDPOINT'] = os.getenv('r2_endpoint')
 app.config['R2_BUCKET_NAME'] = os.getenv('r2_bucket_name')
 
-app.config['SQLALCHEMY_DATABASE_URI'] = f"mysql+pymysql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+app.config['SQLALCHEMY_DATABASE_URI'] = f"mysql+pymysql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}?charset=utf8mb4&connect_timeout=10"
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    'pool_size': 10,
+    'pool_recycle': 3600,
+    'pool_pre_ping': True,
+    'max_overflow': 20,
+    'connect_args': {
+        'connect_timeout': 10,
+        'read_timeout': 30,
+        'write_timeout': 30
+    }
+}
 app.config['JWT_SECRET_KEY'] = 'your-secret-key-change-this-in-production'
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = False
 # JWT Header configuration for Swagger compatibility
@@ -37,6 +49,7 @@ app.config['JWT_HEADER_TYPE'] = 'Bearer'
 from models import db
 db.init_app(app)
 jwt = JWTManager(app)
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 # JWT Error handlers for better debugging
 @jwt.expired_token_loader
@@ -125,11 +138,17 @@ from routes.auth import auth_ns
 from routes.users import users_ns
 from routes.providers import providers_ns
 from routes.chat import chat_ns
+from routes.admin import admin_ns
 
 api.add_namespace(auth_ns, path='/api/auth')
 api.add_namespace(users_ns, path='/api/users')
 api.add_namespace(providers_ns, path='/api/providers')
 api.add_namespace(chat_ns, path='/api/chat')
+api.add_namespace(admin_ns, path='/api/admin')
+
+# Initialize SocketIO for chat
+from routes.chat import init_socketio
+init_socketio(socketio)
 
 if __name__ == '__main__':
     try:
@@ -141,12 +160,12 @@ if __name__ == '__main__':
             db.create_all()
             print("Database tables created successfully!")
             
-        print("Starting Flask server on http://0.0.0.0:9078")
+        print("Starting Flask server with SocketIO on http://0.0.0.0:9078")
         print("API Documentation available at: http://localhost:9078/docs/")
-        app.run(debug=True, host='0.0.0.0', port=9078)
+        socketio.run(app, debug=True, host='0.0.0.0', port=9078, allow_unsafe_werkzeug=True)
         
     except Exception as e:
         print(f"Error starting application: {e}")
         print("\nRunning without database connection for API testing...")
         print("API Documentation available at: http://localhost:9078/docs/")
-        app.run(debug=True, host='0.0.0.0', port=9078)
+        socketio.run(app, debug=True, host='0.0.0.0', port=9078, allow_unsafe_werkzeug=True)

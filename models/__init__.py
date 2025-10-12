@@ -6,7 +6,7 @@ db = SQLAlchemy()
 
 class User(db.Model):
     __tablename__ = 'users'
-    
+
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     full_name = db.Column(db.String(255), nullable=False)
     email = db.Column(db.String(255), nullable=False, unique=True)
@@ -14,6 +14,7 @@ class User(db.Model):
     password_hash = db.Column(db.String(255), nullable=False)
     id_front = db.Column(db.String(255), nullable=True)
     id_back = db.Column(db.String(255), nullable=True)
+    status = db.Column(db.Enum('active', 'inactive', 'suspended', name='user_status_enum'), nullable=False, default='active')
     created_at = db.Column(db.TIMESTAMP, default=datetime.utcnow)
     updated_at = db.Column(db.TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -39,6 +40,7 @@ class Provider(db.Model):
     image_logo = db.Column(db.String(255), nullable=True)
     about = db.Column(db.Text, nullable=True)
     is_active = db.Column(db.Boolean, nullable=False, default=True)
+    status = db.Column(db.Enum('active', 'inactive', 'suspended', name='provider_status_enum'), nullable=False, default='active')
     created_at = db.Column(db.TIMESTAMP, default=datetime.utcnow)
     updated_at = db.Column(db.TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -170,8 +172,15 @@ class ChatMessage(db.Model):
     id = db.Column(db.BigInteger, primary_key=True, autoincrement=True)
     conversation_id = db.Column(db.BigInteger, db.ForeignKey('chat_conversations.id'), nullable=False)
     sender_id = db.Column(db.BigInteger, db.ForeignKey('chat_actors.id'), nullable=False)
-    message_type = db.Column(db.Enum('text', 'image', 'file', 'system', name='message_type_enum'), nullable=False, default='text')
+    message_type = db.Column(db.Enum('text', 'image', 'video', 'audio', 'file', 'system', name='message_type_enum'), nullable=False, default='text')
     body = db.Column(db.Text, nullable=True)
+    attachment_path = db.Column(db.String(1024), nullable=True)
+    attachment_mime = db.Column(db.String(191), nullable=True)
+    attachment_size = db.Column(db.BigInteger, nullable=True)
+    attachment_duration_ms = db.Column(db.Integer, nullable=True)
+    attachment_width = db.Column(db.Integer, nullable=True)
+    attachment_height = db.Column(db.Integer, nullable=True)
+    thumbnail_path = db.Column(db.String(1024), nullable=True)
     attachment_url = db.Column(db.String(1024), nullable=True)
     meta_json = db.Column(db.JSON, nullable=True)
     created_at = db.Column(db.TIMESTAMP, default=datetime.utcnow)
@@ -185,3 +194,24 @@ class ChatMessageReceipt(db.Model):
     actor_id = db.Column(db.BigInteger, db.ForeignKey('chat_actors.id'), primary_key=True)
     delivered_at = db.Column(db.TIMESTAMP, nullable=True)
     read_at = db.Column(db.TIMESTAMP, nullable=True)
+
+class Admin(db.Model):
+    __tablename__ = 'admin'
+
+    admin_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    full_name = db.Column(db.String(150), nullable=False)
+    email = db.Column(db.String(120), nullable=False, unique=True)
+    password_hash = db.Column(db.String(255), nullable=False)
+    role = db.Column(db.Enum('superadmin', 'admin', 'moderator', name='admin_role_enum'), nullable=False, default='admin')
+    address = db.Column(db.Text, nullable=True)
+    date_created = db.Column(db.TIMESTAMP, default=datetime.utcnow)
+    date_modified = db.Column(db.TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_login = db.Column(db.TIMESTAMP, nullable=True)
+    is_active = db.Column(db.Boolean, nullable=False, default=True)
+    is_deleted = db.Column(db.Boolean, nullable=False, default=False)
+
+    def set_password(self, password):
+        self.password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+    def check_password(self, password):
+        return bcrypt.checkpw(password.encode('utf-8'), self.password_hash.encode('utf-8'))
