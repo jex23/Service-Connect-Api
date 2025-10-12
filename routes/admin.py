@@ -1,9 +1,10 @@
 from flask import request
 from flask_restx import Namespace, Resource, fields
 from flask_jwt_extended import jwt_required, get_jwt_identity, create_access_token
-from models import db, Admin, Provider, User, ProviderService, ServiceCategory, ProviderServicePhoto, ProviderServiceSchedule, ServiceBooking
+from models import db, Admin, Provider, User, ProviderService, ServiceCategory, ProviderServicePhoto, ProviderServiceSchedule, ServiceBooking, PaymentStatus
 from datetime import datetime
 from functools import wraps
+from sqlalchemy import func
 
 # Create namespace
 admin_ns = Namespace('admin', description='Admin operations')
@@ -183,6 +184,44 @@ booking_model = admin_ns.model('Booking', {
 
 update_booking_status_model = admin_ns.model('UpdateBookingStatus', {
     'status': fields.String(required=True, description='Booking status', enum=['Pending', 'Confirmed', 'Completed', 'Cancelled'])
+})
+
+# Sales Report models
+sales_booking_detail_model = admin_ns.model('SalesBookingDetail', {
+    'booking_id': fields.Integer(description='Booking ID'),
+    'user_name': fields.String(description='User name'),
+    'user_email': fields.String(description='User email'),
+    'service_title': fields.String(description='Service title'),
+    'booking_date': fields.String(description='Booking date'),
+    'booking_time': fields.String(description='Booking time'),
+    'price': fields.Float(description='Service price'),
+    'payment_status': fields.String(description='Payment status'),
+    'payment_date': fields.String(description='Payment date'),
+    'booking_status': fields.String(description='Booking status')
+})
+
+provider_sales_summary_model = admin_ns.model('ProviderSalesSummary', {
+    'provider_id': fields.Integer(description='Provider ID'),
+    'business_name': fields.String(description='Business name'),
+    'provider_name': fields.String(description='Provider name'),
+    'email': fields.String(description='Email'),
+    'total_bookings': fields.Integer(description='Total paid bookings'),
+    'total_revenue': fields.Float(description='Total revenue'),
+    'completed_bookings': fields.Integer(description='Completed bookings'),
+    'pending_bookings': fields.Integer(description='Pending bookings'),
+    'cancelled_bookings': fields.Integer(description='Cancelled bookings')
+})
+
+sales_report_model = admin_ns.model('SalesReport', {
+    'provider': fields.Nested(provider_sales_summary_model, description='Provider summary'),
+    'bookings': fields.List(fields.Nested(sales_booking_detail_model), description='Paid booking details')
+})
+
+overall_sales_summary_model = admin_ns.model('OverallSalesSummary', {
+    'total_providers': fields.Integer(description='Total providers with sales'),
+    'total_revenue': fields.Float(description='Total platform revenue'),
+    'total_bookings': fields.Integer(description='Total paid bookings'),
+    'providers': fields.List(fields.Nested(provider_sales_summary_model), description='Provider summaries')
 })
 
 # Helper decorator for superadmin-only access
@@ -1222,3 +1261,207 @@ class BookingStatus(Resource):
         except Exception as e:
             db.session.rollback()
             return {'error': f'Failed to update booking status: {str(e)}'}, 500
+
+@admin_ns.route('/sales-report')
+class SalesReport(Resource):
+    @admin_ns.doc(security='Bearer')
+    @admin_ns.marshal_with(overall_sales_summary_model, code=200)
+    @admin_ns.response(401, 'Unauthorized', error_model)
+    @admin_ns.response(403, 'Forbidden - Admin access required', error_model)
+    @admin_required
+    def get(self):
+        """Get overall sales report for all providers (Admin access required)
+
+        Query parameters:
+        - start_date: Filter from date (YYYY-MM-DD)
+        - end_date: Filter to date (YYYY-MM-DD)
+        """
+        try:
+            # Get query parameters for date filtering
+            start_date = request.args.get('start_date')
+            end_date = request.args.get('end_date')
+
+            # Base query: Get all paid bookings with service details
+            query = db.session.query(
+                ServiceBooking,
+                PaymentStatus,
+                ProviderService
+            ).join(
+                PaymentStatus, ServiceBooking.id == PaymentStatus.booking_id
+            ).join(
+                ProviderService, ServiceBooking.provider_service_id == ProviderService.id
+            ).filter(
+                PaymentStatus.status == 'Paid'
+            )
+
+            # Apply date filters if provided
+            if start_date:
+                query = query.filter(ServiceBooking.booking_date >= start_date)
+            if end_date:
+                query = query.filter(ServiceBooking.booking_date <= end_date)
+
+            paid_bookings = query.all()
+
+            # Group by provider
+            provider_data = {}
+            total_revenue = 0
+
+            for booking, payment, service in paid_bookings:
+                provider_id = booking.provider_id
+                price = float(service.price_decimal) if service.price_decimal else 0
+                total_revenue += price
+
+                if provider_id not in provider_data:
+                    provider = Provider.query.get(provider_id)
+                    provider_data[provider_id] = {
+                        'provider': provider,
+                        'total_revenue': 0,
+                        'total_bookings': 0,
+                        'completed_bookings': 0,
+                        'pending_bookings': 0,
+                        'cancelled_bookings': 0
+                    }
+
+                provider_data[provider_id]['total_revenue'] += price
+                provider_data[provider_id]['total_bookings'] += 1
+
+                # Count by booking status
+                if booking.status == 'Completed':
+                    provider_data[provider_id]['completed_bookings'] += 1
+                elif booking.status == 'Pending':
+                    provider_data[provider_id]['pending_bookings'] += 1
+                elif booking.status == 'Cancelled':
+                    provider_data[provider_id]['cancelled_bookings'] += 1
+
+            # Build provider summaries
+            providers_summary = []
+            for provider_id, data in provider_data.items():
+                provider = data['provider']
+                providers_summary.append({
+                    'provider_id': provider.id,
+                    'business_name': provider.business_name,
+                    'provider_name': provider.full_name,
+                    'email': provider.email,
+                    'total_bookings': data['total_bookings'],
+                    'total_revenue': round(data['total_revenue'], 2),
+                    'completed_bookings': data['completed_bookings'],
+                    'pending_bookings': data['pending_bookings'],
+                    'cancelled_bookings': data['cancelled_bookings']
+                })
+
+            # Sort by total revenue descending
+            providers_summary.sort(key=lambda x: x['total_revenue'], reverse=True)
+
+            return {
+                'total_providers': len(provider_data),
+                'total_revenue': round(total_revenue, 2),
+                'total_bookings': len(paid_bookings),
+                'providers': providers_summary
+            }
+
+        except Exception as e:
+            return {'error': f'Failed to generate sales report: {str(e)}'}, 500
+
+@admin_ns.route('/sales-report/provider/<int:provider_id>')
+class ProviderSalesReport(Resource):
+    @admin_ns.doc(security='Bearer')
+    @admin_ns.marshal_with(sales_report_model, code=200)
+    @admin_ns.response(401, 'Unauthorized', error_model)
+    @admin_ns.response(403, 'Forbidden - Admin access required', error_model)
+    @admin_ns.response(404, 'Provider not found', error_model)
+    @admin_required
+    def get(self, provider_id):
+        """Get detailed sales report for a specific provider (Admin access required)
+
+        Query parameters:
+        - start_date: Filter from date (YYYY-MM-DD)
+        - end_date: Filter to date (YYYY-MM-DD)
+        """
+        try:
+            # Check if provider exists
+            provider = Provider.query.get(provider_id)
+            if not provider:
+                return {'error': 'Provider not found'}, 404
+
+            # Get query parameters for date filtering
+            start_date = request.args.get('start_date')
+            end_date = request.args.get('end_date')
+
+            # Query paid bookings for this provider
+            query = db.session.query(
+                ServiceBooking,
+                PaymentStatus,
+                ProviderService,
+                User
+            ).join(
+                PaymentStatus, ServiceBooking.id == PaymentStatus.booking_id
+            ).join(
+                ProviderService, ServiceBooking.provider_service_id == ProviderService.id
+            ).join(
+                User, ServiceBooking.user_id == User.id
+            ).filter(
+                ServiceBooking.provider_id == provider_id,
+                PaymentStatus.status == 'Paid'
+            )
+
+            # Apply date filters if provided
+            if start_date:
+                query = query.filter(ServiceBooking.booking_date >= start_date)
+            if end_date:
+                query = query.filter(ServiceBooking.booking_date <= end_date)
+
+            paid_bookings = query.all()
+
+            # Calculate summary statistics
+            total_revenue = 0
+            completed_count = 0
+            pending_count = 0
+            cancelled_count = 0
+            booking_details = []
+
+            for booking, payment, service, user in paid_bookings:
+                price = float(service.price_decimal) if service.price_decimal else 0
+                total_revenue += price
+
+                # Count by status
+                if booking.status == 'Completed':
+                    completed_count += 1
+                elif booking.status == 'Pending':
+                    pending_count += 1
+                elif booking.status == 'Cancelled':
+                    cancelled_count += 1
+
+                # Add booking detail
+                booking_details.append({
+                    'booking_id': booking.id,
+                    'user_name': user.full_name,
+                    'user_email': user.email,
+                    'service_title': service.service_title,
+                    'booking_date': str(booking.booking_date) if booking.booking_date else None,
+                    'booking_time': str(booking.booking_time) if booking.booking_time else None,
+                    'price': price,
+                    'payment_status': payment.status,
+                    'payment_date': payment.created_at.isoformat() if payment.created_at else None,
+                    'booking_status': booking.status
+                })
+
+            # Sort bookings by date descending
+            booking_details.sort(key=lambda x: x['booking_date'] or '', reverse=True)
+
+            return {
+                'provider': {
+                    'provider_id': provider.id,
+                    'business_name': provider.business_name,
+                    'provider_name': provider.full_name,
+                    'email': provider.email,
+                    'total_bookings': len(paid_bookings),
+                    'total_revenue': round(total_revenue, 2),
+                    'completed_bookings': completed_count,
+                    'pending_bookings': pending_count,
+                    'cancelled_bookings': cancelled_count
+                },
+                'bookings': booking_details
+            }
+
+        except Exception as e:
+            return {'error': f'Failed to generate provider sales report: {str(e)}'}, 500
