@@ -1,6 +1,6 @@
 from flask import request
 from flask_restx import Namespace, Resource, fields
-from flask_jwt_extended import jwt_required, get_jwt_identity
+from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
 from utils.upload import upload_file_to_r2, delete_file_from_r2
 
 try:
@@ -172,12 +172,12 @@ class ProviderProfile(Resource):
 
         try:
             current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
+            claims = get_jwt()
+            provider_id = int(current_identity)
+            user_type = claims.get('user_type')
 
             if user_type != 'provider':
                 return {'error': 'Access denied - provider account required'}, 403
-
-            provider_id = current_identity['user_id']
             provider = Provider.query.get(provider_id)
 
             if not provider:
@@ -267,12 +267,12 @@ image_logo=<file>
 
         try:
             current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
+            claims = get_jwt()
+            provider_id = int(current_identity)
+            user_type = claims.get('user_type')
 
             if user_type != 'provider':
                 return {'error': 'Access denied - provider account required'}, 403
-
-            provider_id = current_identity['user_id']
             provider = Provider.query.get(provider_id)
 
             if not provider:
@@ -1287,12 +1287,12 @@ class ProviderRegisteredCategories(Resource):
 
         try:
             current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
+            claims = get_jwt()
+            provider_id = int(current_identity)
+            user_type = claims.get('user_type')
 
             if user_type != 'provider':
                 return {'error': 'Access denied - provider account required'}, 403
-
-            provider_id = current_identity['user_id']
 
             # Get provider's registered categories with details
             registered_categories = db.session.query(ServiceCategory).join(
@@ -1965,12 +1965,12 @@ class AdminProviderServices(Resource):
 
         try:
             current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
+            claims = get_jwt()
+            provider_id = int(current_identity)
+            user_type = claims.get('user_type')
 
             if user_type != 'provider':
                 return {'error': 'Access denied - provider account required'}, 403
-
-            provider_id = current_identity['user_id']
 
             # Get query parameters
             active_filter = request.args.get('active')
@@ -2159,12 +2159,12 @@ schedules=[{"schedule_day":"Monday","start_time":"09:00","end_time":"17:00"}]
 
         try:
             current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
+            claims = get_jwt()
+            provider_id = int(current_identity)
+            user_type = claims.get('user_type')
 
             if user_type != 'provider':
                 return {'error': 'Access denied - provider account required'}, 403
-
-            provider_id = current_identity['user_id']
 
             # Determine content type and parse data accordingly
             content_type = request.content_type or ''
@@ -2345,12 +2345,12 @@ class AdminProviderServiceDetail(Resource):
 
         try:
             current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
+            claims = get_jwt()
+            provider_id = int(current_identity)
+            user_type = claims.get('user_type')
 
             if user_type != 'provider':
                 return {'error': 'Access denied - provider account required'}, 403
-
-            provider_id = current_identity['user_id']
 
             # Get service with category
             service = db.session.query(ProviderService, ServiceCategory).join(
@@ -2485,12 +2485,12 @@ schedules=[{"schedule_day":"Monday","start_time":"10:00","end_time":"18:00"}]
 
         try:
             current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
+            claims = get_jwt()
+            provider_id = int(current_identity)
+            user_type = claims.get('user_type')
 
             if user_type != 'provider':
                 return {'error': 'Access denied - provider account required'}, 403
-
-            provider_id = current_identity['user_id']
 
             # Get service
             service = ProviderService.query.filter_by(
@@ -2697,12 +2697,12 @@ schedules=[{"schedule_day":"Monday","start_time":"10:00","end_time":"18:00"}]
 
         try:
             current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
+            claims = get_jwt()
+            provider_id = int(current_identity)
+            user_type = claims.get('user_type')
 
             if user_type != 'provider':
                 return {'error': 'Access denied - provider account required'}, 403
-
-            provider_id = current_identity['user_id']
 
             # Get service
             service = ProviderService.query.filter_by(
@@ -2764,12 +2764,12 @@ class ProviderBookings(Resource):
 
         try:
             current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
+            claims = get_jwt()
+            provider_id = int(current_identity)
+            user_type = claims.get('user_type')
 
             if user_type != 'provider':
                 return {'error': 'Access denied - provider account required'}, 403
-
-            provider_id = current_identity['user_id']
 
             # Query bookings for this provider with joins to get user, service, and payment details
             bookings = db.session.query(
@@ -2836,12 +2836,12 @@ class ProviderBookings(Resource):
 
         try:
             current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
+            claims = get_jwt()
+            provider_id = int(current_identity)
+            user_type = claims.get('user_type')
 
             if user_type != 'provider':
                 return {'error': 'Access denied - provider account required'}, 403
-
-            provider_id = current_identity['user_id']
             data = request.get_json()
 
             # Validate required fields
@@ -2924,12 +2924,12 @@ class ProviderBookingDetail(Resource):
 
         try:
             current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
+            claims = get_jwt()
+            provider_id = int(current_identity)
+            user_type = claims.get('user_type')
 
             if user_type != 'provider':
                 return {'error': 'Access denied - provider account required'}, 403
-
-            provider_id = current_identity['user_id']
 
             # Query booking with user, service, and payment details
             booking_data = db.session.query(
@@ -2999,12 +2999,12 @@ class ProviderBookingDetail(Resource):
 
         try:
             current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
+            claims = get_jwt()
+            provider_id = int(current_identity)
+            user_type = claims.get('user_type')
 
             if user_type != 'provider':
                 return {'error': 'Access denied - provider account required'}, 403
-
-            provider_id = current_identity['user_id']
             data = request.get_json()
 
             # Find the booking

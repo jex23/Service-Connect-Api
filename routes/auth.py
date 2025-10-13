@@ -238,12 +238,12 @@ class UserRegister(Resource):
                 id_back=data.get('id_back')
             )
             user.set_password(data['password'])
-            
+
             db.session.add(user)
             db.session.commit()
-            
+
             # Create access token
-            access_token = create_access_token(identity={'user_id': user.id, 'user_type': 'user'})
+            access_token = create_access_token(identity=str(user.id), additional_claims={'user_type': 'user'})
             
             return {
                 'message': 'User registered successfully',
@@ -282,8 +282,8 @@ class UserLogin(Resource):
             
             if not user or not user.check_password(data['password']):
                 return {'error': 'Invalid email or password'}, 401
-            
-            access_token = create_access_token(identity={'user_id': user.id, 'user_type': 'user'})
+
+            access_token = create_access_token(identity=str(user.id), additional_claims={'user_type': 'user'})
             
             return {
                 'message': 'Login successful',
@@ -471,7 +471,7 @@ class ProviderRegister(Resource):
             
             # Create access token
             print("Creating access token...")
-            access_token = create_access_token(identity={'user_id': provider.id, 'user_type': 'provider'})
+            access_token = create_access_token(identity=str(provider.id), additional_claims={'user_type': 'provider'})
             print("Access token created successfully")
             
             print("Preparing response...")
@@ -554,8 +554,8 @@ class ProviderLogin(Resource):
             
             if not provider.is_active:
                 return {'error': 'Provider account is inactive'}, 403
-            
-            access_token = create_access_token(identity={'user_id': provider.id, 'user_type': 'provider'})
+
+            access_token = create_access_token(identity=str(provider.id), additional_claims={'user_type': 'provider'})
             
             return {
                 'message': 'Login successful',
@@ -657,12 +657,12 @@ class UserRegisterWithUpload(Resource):
                 id_back=id_back_url
             )
             user.set_password(data['password'])
-            
+
             db.session.add(user)
             db.session.commit()
-            
+
             # Create access token
-            access_token = create_access_token(identity={'user_id': user.id, 'user_type': 'user'})
+            access_token = create_access_token(identity=str(user.id), additional_claims={'user_type': 'user'})
             
             return {
                 'message': 'User registered successfully',
@@ -794,12 +794,12 @@ class ProviderRegisterWithUpload(Resource):
                 is_active=True
             )
             provider.set_password(data['password'])
-            
+
             db.session.add(provider)
             db.session.commit()
-            
+
             # Create access token
-            access_token = create_access_token(identity={'user_id': provider.id, 'user_type': 'provider'})
+            access_token = create_access_token(identity=str(provider.id), additional_claims={'user_type': 'provider'})
             
             return {
                 'message': 'Provider registered successfully',
@@ -832,9 +832,11 @@ class GetCurrentUser(Resource):
     def get(self):
         """Get current authenticated user/provider info using Bearer token"""
         try:
+            from flask_jwt_extended import get_jwt
             current_identity = get_jwt_identity()
-            user_id = current_identity['user_id']
-            user_type = current_identity['user_type']
+            claims = get_jwt()
+            user_id = int(current_identity)
+            user_type = claims.get('user_type')
             
             if user_type == 'user':
                 user = User.query.get(user_id)

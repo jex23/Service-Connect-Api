@@ -1,6 +1,6 @@
 from flask import request
 from flask_restx import Namespace, Resource, fields
-from flask_jwt_extended import jwt_required, get_jwt_identity
+from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
 from models import (
     db, ChatActor, ChatConversation, ChatConversationParticipant,
     ChatMessage, ChatMessageReceipt, User, Provider
@@ -194,8 +194,9 @@ class ConversationList(Resource):
         """Get all conversations for the current user"""
         try:
             current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
-            user_id = current_identity['user_id']
+            claims = get_jwt()
+            user_id = int(current_identity)
+            user_type = claims.get('user_type')
 
             # Get or create actor
             actor = get_or_create_actor(
@@ -331,8 +332,9 @@ class ConversationList(Resource):
                 chat_ns.abort(400, 'participant_type must be either "user" or "provider"')
 
             current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
-            user_id = current_identity['user_id']
+            claims = get_jwt()
+            user_id = int(current_identity)
+            user_type = claims.get('user_type')
 
             # Get or create current user's actor
             current_actor = get_or_create_actor(
@@ -421,8 +423,9 @@ class MessageList(Resource):
         """Get messages for a conversation"""
         try:
             current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
-            user_id = current_identity['user_id']
+            claims = get_jwt()
+            user_id = int(current_identity)
+            user_type = claims.get('user_type')
 
             # Get current user's actor
             actor = get_or_create_actor(
@@ -518,8 +521,9 @@ class MessageList(Resource):
         try:
             data = request.get_json()
             current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
-            user_id = current_identity['user_id']
+            claims = get_jwt()
+            user_id = int(current_identity)
+            user_type = claims.get('user_type')
 
             if not data.get('message_type'):
                 return {'error': 'message_type is required'}, 400
@@ -610,8 +614,9 @@ class MarkMessageRead(Resource):
         """Mark a message as read"""
         try:
             current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
-            user_id = current_identity['user_id']
+            claims = get_jwt()
+            user_id = int(current_identity)
+            user_type = claims.get('user_type')
 
             # Get current user's actor
             actor = get_or_create_actor(
@@ -663,8 +668,9 @@ class ConversationDetail(Resource):
         """Get conversation details"""
         try:
             current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
-            user_id = current_identity['user_id']
+            claims = get_jwt()
+            user_id = int(current_identity)
+            user_type = claims.get('user_type')
 
             # Get current user's actor
             actor = get_or_create_actor(
@@ -728,8 +734,9 @@ class ChatFileUpload(Resource):
         """Upload a file for chat attachment"""
         try:
             current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
-            user_id = current_identity['user_id']
+            claims = get_jwt()
+            user_id = int(current_identity)
+            user_type = claims.get('user_type')
 
             # Check if file is present
             if 'file' not in request.files:
