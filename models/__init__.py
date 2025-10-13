@@ -215,3 +215,21 @@ class Admin(db.Model):
 
     def check_password(self, password):
         return bcrypt.checkpw(password.encode('utf-8'), self.password_hash.encode('utf-8'))
+
+class CustomerReport(db.Model):
+    __tablename__ = 'customer_reports'
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    provider_id = db.Column(db.Integer, db.ForeignKey('providers.id'), nullable=False)
+    provider_service_id = db.Column(db.Integer, db.ForeignKey('provider_services.id'), nullable=True)
+    booking_id = db.Column(db.Integer, db.ForeignKey('service_booking.id'), nullable=True)
+    report_type = db.Column(db.Enum('service_quality', 'provider_behavior', 'payment_issue', 'cancellation', 'other', name='report_type_enum'), nullable=False)
+    subject = db.Column(db.String(255), nullable=False)
+    description = db.Column(db.Text, nullable=False)
+    status = db.Column(db.Enum('Pending', 'Under Review', 'Resolved', 'Rejected', name='report_status_enum'), nullable=False, default='Pending')
+    admin_response = db.Column(db.Text, nullable=True)
+    admin_id = db.Column(db.Integer, db.ForeignKey('admin.admin_id'), nullable=True)
+    created_at = db.Column(db.TIMESTAMP, default=datetime.utcnow)
+    updated_at = db.Column(db.TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow)
+    resolved_at = db.Column(db.TIMESTAMP, nullable=True)

@@ -1,7 +1,7 @@
 from flask import request
 from flask_restx import Namespace, Resource, fields
 from flask_jwt_extended import jwt_required, get_jwt_identity, create_access_token
-from models import db, Admin, Provider, User, ProviderService, ServiceCategory, ProviderServicePhoto, ProviderServiceSchedule, ServiceBooking, PaymentStatus
+from models import db, Admin, Provider, User, ProviderService, ServiceCategory, ProviderServicePhoto, ProviderServiceSchedule, ServiceBooking, PaymentStatus, CustomerReport
 from datetime import datetime
 from functools import wraps
 from sqlalchemy import func
@@ -222,6 +222,33 @@ overall_sales_summary_model = admin_ns.model('OverallSalesSummary', {
     'total_revenue': fields.Float(description='Total platform revenue'),
     'total_bookings': fields.Integer(description='Total paid bookings'),
     'providers': fields.List(fields.Nested(provider_sales_summary_model), description='Provider summaries')
+})
+
+# Customer Report/Complaint models
+report_model = admin_ns.model('CustomerReport', {
+    'id': fields.Integer(description='Report ID'),
+    'user_id': fields.Integer(description='User ID'),
+    'provider_id': fields.Integer(description='Provider ID'),
+    'provider_service_id': fields.Integer(description='Service ID'),
+    'booking_id': fields.Integer(description='Booking ID'),
+    'report_type': fields.String(description='Report type'),
+    'subject': fields.String(description='Report subject'),
+    'description': fields.String(description='Report description'),
+    'status': fields.String(description='Report status'),
+    'admin_response': fields.String(description='Admin response'),
+    'admin_id': fields.Integer(description='Admin ID who handled this'),
+    'created_at': fields.DateTime(description='Created at'),
+    'updated_at': fields.DateTime(description='Updated at'),
+    'resolved_at': fields.DateTime(description='Resolved at'),
+    'user': fields.Nested(user_info_model, description='User information'),
+    'provider': fields.Nested(provider_info_model, description='Provider information'),
+    'service': fields.Nested(booking_service_model, description='Service information'),
+    'booking': fields.Raw(description='Booking information')
+})
+
+update_report_status_model = admin_ns.model('UpdateReportStatus', {
+    'status': fields.String(required=True, description='Report status', enum=['Pending', 'Under Review', 'Resolved', 'Rejected']),
+    'admin_response': fields.String(description='Admin response/notes')
 })
 
 # Helper decorator for superadmin-only access
@@ -1465,3 +1492,297 @@ class ProviderSalesReport(Resource):
 
         except Exception as e:
             return {'error': f'Failed to generate provider sales report: {str(e)}'}, 500
+
+@admin_ns.route('/reports')
+class CustomerReportList(Resource):
+    @admin_ns.doc(security='Bearer')
+    @admin_ns.marshal_list_with(report_model, code=200)
+    @admin_ns.response(401, 'Unauthorized', error_model)
+    @admin_ns.response(403, 'Forbidden - Admin access required', error_model)
+    @admin_required
+    def get(self):
+        """Get list of all customer reports/complaints (Admin access required)
+
+        Query parameters:
+        - user_id: Filter by user
+        - provider_id: Filter by provider
+        - status: Filter by status (Pending, Under Review, Resolved, Rejected)
+        - report_type: Filter by type (service_quality, provider_behavior, payment_issue, cancellation, other)
+        """
+        try:
+            # Get query parameters for filtering
+            user_id = request.args.get('user_id', type=int)
+            provider_id = request.args.get('provider_id', type=int)
+            status_filter = request.args.get('status')
+            report_type = request.args.get('report_type')
+
+            query = CustomerReport.query
+
+            # Apply filters if provided
+            if user_id:
+                query = query.filter_by(user_id=user_id)
+            if provider_id:
+                query = query.filter_by(provider_id=provider_id)
+            if status_filter:
+                query = query.filter_by(status=status_filter)
+            if report_type:
+                query = query.filter_by(report_type=report_type)
+
+            # Order by created_at descending (newest first)
+            reports = query.order_by(CustomerReport.created_at.desc()).all()
+
+            result = []
+            for report in reports:
+                # Get user details
+                user = User.query.get(report.user_id)
+                user_data = None
+                if user:
+                    user_data = {
+                        'id': user.id,
+                        'full_name': user.full_name,
+                        'email': user.email,
+                        'address': user.address,
+                        'status': user.status
+                    }
+
+                # Get provider details
+                provider = Provider.query.get(report.provider_id)
+                provider_data = None
+                if provider:
+                    provider_data = {
+                        'id': provider.id,
+                        'business_name': provider.business_name,
+                        'full_name': provider.full_name,
+                        'email': provider.email,
+                        'contact_number': provider.contact_number,
+                        'address': provider.address,
+                        'image_logo': provider.image_logo,
+                        'about': provider.about,
+                        'is_active': provider.is_active,
+                        'status': provider.status
+                    }
+
+                # Get service details if available
+                service_data = None
+                if report.provider_service_id:
+                    service = ProviderService.query.get(report.provider_service_id)
+                    if service:
+                        service_data = {
+                            'id': service.id,
+                            'service_title': service.service_title,
+                            'service_description': service.service_description,
+                            'price_decimal': float(service.price_decimal) if service.price_decimal else None,
+                            'duration_minutes': service.duration_minutes
+                        }
+
+                # Get booking details if available
+                booking_data = None
+                if report.booking_id:
+                    booking = ServiceBooking.query.get(report.booking_id)
+                    if booking:
+                        booking_data = {
+                            'id': booking.id,
+                            'booking_date': str(booking.booking_date) if booking.booking_date else None,
+                            'booking_time': str(booking.booking_time) if booking.booking_time else None,
+                            'status': booking.status
+                        }
+
+                result.append({
+                    'id': report.id,
+                    'user_id': report.user_id,
+                    'provider_id': report.provider_id,
+                    'provider_service_id': report.provider_service_id,
+                    'booking_id': report.booking_id,
+                    'report_type': report.report_type,
+                    'subject': report.subject,
+                    'description': report.description,
+                    'status': report.status,
+                    'admin_response': report.admin_response,
+                    'admin_id': report.admin_id,
+                    'created_at': report.created_at.isoformat() if report.created_at else None,
+                    'updated_at': report.updated_at.isoformat() if report.updated_at else None,
+                    'resolved_at': report.resolved_at.isoformat() if report.resolved_at else None,
+                    'user': user_data,
+                    'provider': provider_data,
+                    'service': service_data,
+                    'booking': booking_data
+                })
+
+            return result
+
+        except Exception as e:
+            return {'error': f'Failed to get report list: {str(e)}'}, 500
+
+@admin_ns.route('/reports/<int:report_id>')
+class CustomerReportDetail(Resource):
+    @admin_ns.doc(security='Bearer')
+    @admin_ns.marshal_with(report_model, code=200)
+    @admin_ns.response(401, 'Unauthorized', error_model)
+    @admin_ns.response(403, 'Forbidden - Admin access required', error_model)
+    @admin_ns.response(404, 'Report not found', error_model)
+    @admin_required
+    def get(self, report_id):
+        """Get single customer report/complaint details (Admin access required)"""
+        try:
+            report = CustomerReport.query.get(report_id)
+
+            if not report:
+                return {'error': 'Report not found'}, 404
+
+            # Get user details
+            user = User.query.get(report.user_id)
+            user_data = None
+            if user:
+                user_data = {
+                    'id': user.id,
+                    'full_name': user.full_name,
+                    'email': user.email,
+                    'address': user.address,
+                    'status': user.status
+                }
+
+            # Get provider details
+            provider = Provider.query.get(report.provider_id)
+            provider_data = None
+            if provider:
+                provider_data = {
+                    'id': provider.id,
+                    'business_name': provider.business_name,
+                    'full_name': provider.full_name,
+                    'email': provider.email,
+                    'contact_number': provider.contact_number,
+                    'address': provider.address,
+                    'image_logo': provider.image_logo,
+                    'about': provider.about,
+                    'is_active': provider.is_active,
+                    'status': provider.status
+                }
+
+            # Get service details if available
+            service_data = None
+            if report.provider_service_id:
+                service = ProviderService.query.get(report.provider_service_id)
+                if service:
+                    service_data = {
+                        'id': service.id,
+                        'service_title': service.service_title,
+                        'service_description': service.service_description,
+                        'price_decimal': float(service.price_decimal) if service.price_decimal else None,
+                        'duration_minutes': service.duration_minutes
+                    }
+
+            # Get booking details if available
+            booking_data = None
+            if report.booking_id:
+                booking = ServiceBooking.query.get(report.booking_id)
+                if booking:
+                    booking_data = {
+                        'id': booking.id,
+                        'booking_date': str(booking.booking_date) if booking.booking_date else None,
+                        'booking_time': str(booking.booking_time) if booking.booking_time else None,
+                        'status': booking.status
+                    }
+
+            return {
+                'id': report.id,
+                'user_id': report.user_id,
+                'provider_id': report.provider_id,
+                'provider_service_id': report.provider_service_id,
+                'booking_id': report.booking_id,
+                'report_type': report.report_type,
+                'subject': report.subject,
+                'description': report.description,
+                'status': report.status,
+                'admin_response': report.admin_response,
+                'admin_id': report.admin_id,
+                'created_at': report.created_at.isoformat() if report.created_at else None,
+                'updated_at': report.updated_at.isoformat() if report.updated_at else None,
+                'resolved_at': report.resolved_at.isoformat() if report.resolved_at else None,
+                'user': user_data,
+                'provider': provider_data,
+                'service': service_data,
+                'booking': booking_data
+            }
+
+        except Exception as e:
+            return {'error': f'Failed to get report details: {str(e)}'}, 500
+
+@admin_ns.route('/reports/<int:report_id>/status')
+class CustomerReportStatus(Resource):
+    @admin_ns.doc(security='Bearer')
+    @admin_ns.expect(update_report_status_model)
+    @admin_ns.response(200, 'Status updated successfully', success_model)
+    @admin_ns.response(400, 'Bad Request', error_model)
+    @admin_ns.response(401, 'Unauthorized', error_model)
+    @admin_ns.response(403, 'Forbidden - Admin access required', error_model)
+    @admin_ns.response(404, 'Report not found', error_model)
+    @jwt_required()
+    def patch(self, report_id):
+        """Update customer report status and add admin response (Admin access required)"""
+        try:
+            current_identity = get_jwt_identity()
+
+            # Check if user is an admin
+            if current_identity.get('user_type') != 'admin':
+                return {'error': 'Access denied. Admin authentication required.'}, 403
+
+            # Get current admin
+            admin_id = current_identity.get('user_id')
+            admin = Admin.query.filter_by(admin_id=admin_id, is_deleted=False).first()
+
+            if not admin:
+                return {'error': 'Admin not found or has been deleted'}, 404
+
+            if not admin.is_active:
+                return {'error': 'Admin account is inactive'}, 403
+
+            # Get request data
+            data = request.get_json()
+
+            if not data:
+                return {'error': 'Request body is required'}, 400
+
+            if not data.get('status'):
+                return {'error': 'status is required'}, 400
+
+            new_status = data['status']
+            admin_response = data.get('admin_response')
+
+            # Validate status value
+            if new_status not in ['Pending', 'Under Review', 'Resolved', 'Rejected']:
+                return {'error': 'Invalid status. Must be: Pending, Under Review, Resolved, or Rejected'}, 400
+
+            # Find report
+            report = CustomerReport.query.get(report_id)
+
+            if not report:
+                return {'error': 'Report not found'}, 404
+
+            # Update status and admin response
+            old_status = report.status
+            report.status = new_status
+            report.admin_id = admin_id
+
+            if admin_response:
+                report.admin_response = admin_response
+
+            # Set resolved_at if status is Resolved
+            if new_status == 'Resolved' and not report.resolved_at:
+                report.resolved_at = datetime.utcnow()
+
+            db.session.commit()
+
+            return {
+                'message': f'Report status updated from {old_status} to {new_status}',
+                'report': {
+                    'id': report.id,
+                    'status': report.status,
+                    'admin_response': report.admin_response,
+                    'admin_id': report.admin_id,
+                    'resolved_at': report.resolved_at.isoformat() if report.resolved_at else None
+                }
+            }, 200
+
+        except Exception as e:
+            db.session.rollback()
+            return {'error': f'Failed to update report status: {str(e)}'}, 500
