@@ -2789,7 +2789,8 @@ class ProviderBookings(Resource):
             ).outerjoin(
                 PaymentStatus, ServiceBooking.id == PaymentStatus.booking_id
             ).filter(
-                ServiceBooking.provider_id == provider_id
+                ServiceBooking.provider_id == provider_id,
+                ProviderService.provider_id == provider_id
             ).order_by(ServiceBooking.created_at.desc()).all()
 
             booking_list = []
