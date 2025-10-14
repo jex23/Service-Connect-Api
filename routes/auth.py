@@ -209,33 +209,60 @@ class UserRegister(Resource):
 }
 ```''')
     def post(self):
-        """Register a new user account"""
+        """Register a new user account with optional file upload support"""
         if not DB_AVAILABLE:
             return {'error': 'Database connection not available'}, 503
         try:
-            data = request.get_json()
-            
+            # Determine content type and parse data accordingly
+            content_type = request.content_type or ''
+            is_multipart = content_type.startswith('multipart/form-data')
+
+            if is_multipart:
+                data = request.form.to_dict()
+                files = request.files
+            else:
+                data = request.get_json() or {}
+                files = {}
+
             # Validation
             if not all(k in data for k in ['full_name', 'email', 'address', 'password']):
                 return {'error': 'Missing required fields'}, 400
-            
+
             if not validate_email(data['email']):
                 return {'error': 'Invalid email format'}, 400
-            
+
             if len(data['password']) < 6:
                 return {'error': 'Password must be at least 6 characters'}, 400
-            
+
             # Check if user already exists
             if User.query.filter_by(email=data['email']).first():
                 return {'error': 'Email already registered'}, 400
-            
-            # Create new user
+
+            # Handle file uploads if multipart request
+            uploaded_files = {}
+
+            if is_multipart:
+                # Upload individual document files
+                file_fields = ['id_front', 'id_back']
+                for field in file_fields:
+                    if field in files and files[field].filename != '':
+                        upload_result = upload_file_to_r2(
+                            files[field],
+                            'user-documents',
+                            prefix=f'user_{field}'
+                        )
+                        if upload_result['success']:
+                            uploaded_files[field] = upload_result['url']
+                        else:
+                            return {'error': f'{field} upload failed: {upload_result["error"]}'}, 400
+
+            # Create new user with file URLs or form data
             user = User(
                 full_name=data['full_name'],
                 email=data['email'],
                 address=data['address'],
-                id_front=data.get('id_front'),
-                id_back=data.get('id_back')
+                id_front=uploaded_files.get('id_front') or data.get('id_front'),
+                id_back=uploaded_files.get('id_back') or data.get('id_back')
             )
             user.set_password(data['password'])
 
@@ -244,7 +271,7 @@ class UserRegister(Resource):
 
             # Create access token
             access_token = create_access_token(identity=str(user.id), additional_claims={'user_type': 'user'})
-            
+
             return {
                 'message': 'User registered successfully',
                 'access_token': access_token,
@@ -258,7 +285,7 @@ class UserRegister(Resource):
                     'user_type': 'user'
                 }
             }, 201
-            
+
         except Exception as e:
             db.session.rollback()
             return {'error': str(e)}, 500
