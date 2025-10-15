@@ -1,6 +1,6 @@
 from flask import request, jsonify
 from flask_restx import Namespace, Resource, fields
-from flask_jwt_extended import jwt_required, get_jwt_identity
+from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
 from sqlalchemy.exc import OperationalError
 from werkzeug.datastructures import FileStorage
 from utils.upload import upload_file_to_r2, delete_file_from_r2
@@ -156,13 +156,13 @@ class UserProfile(Resource):
             
         try:
             current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
-            
+            claims = get_jwt()
+            user_id = int(current_identity)
+            user_type = claims.get('user_type')
+
             # Only allow users (not providers) to access this endpoint
             if user_type != 'user':
                 return {'error': 'Access denied - user account required'}, 403
-                
-            user_id = current_identity['user_id']
             user = User.query.get(user_id)
             
             if not user:
@@ -235,13 +235,13 @@ class UserProfile(Resource):
             
         try:
             current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
+            claims = get_jwt()
+            user_id = int(current_identity)
+            user_type = claims.get('user_type')
 
             # Only allow users (not providers) to access this endpoint
             if user_type != 'user':
                 return {'error': 'Access denied - user account required'}, 403
-
-            user_id = current_identity['user_id']
             user = User.query.get(user_id)
 
             if not user:
@@ -368,13 +368,13 @@ class UserProfile(Resource):
             
         try:
             current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
-            
+            claims = get_jwt()
+            user_id = int(current_identity)
+            user_type = claims.get('user_type')
+
             # Only allow users (not providers) to access this endpoint
             if user_type != 'user':
                 return {'error': 'Access denied - user account required'}, 403
-                
-            user_id = current_identity['user_id']
             user = User.query.get(user_id)
             
             if not user:
@@ -441,13 +441,13 @@ GET /users/me/services?active=true&category_id=2&limit=10&offset=0
             
         try:
             current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
-            
+            claims = get_jwt()
+            user_id = int(current_identity)
+            user_type = claims.get('user_type')
+
             # Only allow users (not providers) to access this endpoint
             if user_type != 'user':
                 return {'error': 'Access denied - user account required'}, 403
-                
-            user_id = current_identity['user_id']
             user = User.query.get(user_id)
             
             if not user:
@@ -569,13 +569,13 @@ curl -X POST /users/me/upload-documents \\
             
         try:
             current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
-            
+            claims = get_jwt()
+            user_id = int(current_identity)
+            user_type = claims.get('user_type')
+
             # Only allow users (not providers) to access this endpoint
             if user_type != 'user':
                 return {'error': 'Access denied - user account required'}, 403
-                
-            user_id = current_identity['user_id']
             user = User.query.get(user_id)
             
             if not user:
@@ -688,15 +688,15 @@ GET /users/me/bookings?provider_id=5&status=Pending
         try:
             print("Getting JWT identity...")
             current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
+            claims = get_jwt()
+            user_id = int(current_identity)
+            user_type = claims.get('user_type')
             print(f"User type: {user_type}")
 
             # Only allow users (not providers) to access this endpoint
             if user_type != 'user':
                 print(f"Access denied for user_type: {user_type}")
                 return {'error': 'Access denied - user account required'}, 403
-
-            user_id = current_identity['user_id']
             print(f"User ID: {user_id}")
 
             user = User.query.get(user_id)
@@ -919,13 +919,13 @@ GET /users/me/bookings?provider_id=5&status=Pending
 
         try:
             current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
+            claims = get_jwt()
+            user_id = int(current_identity)
+            user_type = claims.get('user_type')
 
             # Only allow users (not providers) to access this endpoint
             if user_type != 'user':
                 return {'error': 'Access denied - user account required'}, 403
-
-            user_id = current_identity['user_id']
             user = User.query.get(user_id)
 
             if not user:
@@ -1867,12 +1867,13 @@ GET /users/me/reports?provider_id=5&status=Resolved
 
         try:
             current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
+            claims = get_jwt()
+            user_id = int(current_identity)
+            user_type = claims.get('user_type')
 
             if user_type != 'user':
                 return {'error': 'Access denied - user account required'}, 403
 
-            user_id = current_identity['user_id']
             user = User.query.get(user_id)
 
             if not user:
@@ -2041,12 +2042,13 @@ GET /users/me/reports?provider_id=5&status=Resolved
 
         try:
             current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
+            claims = get_jwt()
+            user_id = int(current_identity)
+            user_type = claims.get('user_type')
 
             if user_type != 'user':
                 return {'error': 'Access denied - user account required'}, 403
 
-            user_id = current_identity['user_id']
             user = User.query.get(user_id)
 
             if not user:
@@ -2181,12 +2183,13 @@ GET /users/me/reports/5
 
         try:
             current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
+            claims = get_jwt()
+            user_id = int(current_identity)
+            user_type = claims.get('user_type')
 
             if user_type != 'user':
                 return {'error': 'Access denied - user account required'}, 403
 
-            user_id = current_identity['user_id']
             user = User.query.get(user_id)
 
             if not user:
@@ -2249,7 +2252,7 @@ class ReportDetailsDropdown(Resource):
 
         try:
             identity = get_jwt_identity()
-            user_id = identity.get('user_id') if isinstance(identity, dict) else identity
+            user_id = int(identity)
 
             # Get all providers
             providers = Provider.query.filter_by(is_active=True).all()

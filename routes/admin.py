@@ -256,14 +256,16 @@ def superadmin_required(fn):
     @wraps(fn)
     @jwt_required()
     def wrapper(*args, **kwargs):
+        from flask_jwt_extended import get_jwt
         current_identity = get_jwt_identity()
+        claims = get_jwt()
 
         # Check if user is an admin
-        if current_identity.get('user_type') != 'admin':
+        if claims.get('user_type') != 'admin':
             return {'error': 'Access denied. Admin authentication required.'}, 403
 
         # Check if admin is a superadmin
-        admin_id = current_identity.get('user_id')
+        admin_id = int(current_identity)
         admin = Admin.query.filter_by(admin_id=admin_id, is_deleted=False).first()
 
         if not admin:
@@ -283,14 +285,16 @@ def admin_required(fn):
     @wraps(fn)
     @jwt_required()
     def wrapper(*args, **kwargs):
+        from flask_jwt_extended import get_jwt
         current_identity = get_jwt_identity()
+        claims = get_jwt()
 
         # Check if user is an admin
-        if current_identity.get('user_type') != 'admin':
+        if claims.get('user_type') != 'admin':
             return {'error': 'Access denied. Admin authentication required.'}, 403
 
         # Check if admin exists and is active
-        admin_id = current_identity.get('user_id')
+        admin_id = int(current_identity)
         admin = Admin.query.filter_by(admin_id=admin_id, is_deleted=False).first()
 
         if not admin:
@@ -408,11 +412,10 @@ class AdminLogin(Resource):
             db.session.commit()
 
             # Create access token with admin type
-            access_token = create_access_token(identity={
-                'user_id': admin.admin_id,
-                'user_type': 'admin',
-                'role': admin.role
-            })
+            access_token = create_access_token(
+                identity=str(admin.admin_id),
+                additional_claims={'user_type': 'admin', 'role': admin.role}
+            )
 
             return {
                 'access_token': access_token,
@@ -446,8 +449,9 @@ class AdminProfile(Resource):
     def get(self):
         """Get current admin profile"""
         try:
+            from flask_jwt_extended import get_jwt
             current_identity = get_jwt_identity()
-            admin_id = current_identity['user_id']
+            admin_id = int(current_identity)
 
             admin = Admin.query.filter_by(admin_id=admin_id, is_deleted=False).first()
 
@@ -565,14 +569,16 @@ class ProviderStatus(Resource):
     def patch(self, provider_id):
         """Update provider status (Admin/Superadmin can update to any status)"""
         try:
+            from flask_jwt_extended import get_jwt
             current_identity = get_jwt_identity()
+            claims = get_jwt()
 
             # Check if user is an admin
-            if current_identity.get('user_type') != 'admin':
+            if claims.get('user_type') != 'admin':
                 return {'error': 'Access denied. Admin authentication required.'}, 403
 
             # Get current admin
-            admin_id = current_identity.get('user_id')
+            admin_id = int(current_identity)
             admin = Admin.query.filter_by(admin_id=admin_id, is_deleted=False).first()
 
             if not admin:
@@ -692,14 +698,16 @@ class UserStatus(Resource):
     def patch(self, user_id):
         """Update user status (Role-based permissions apply)"""
         try:
+            from flask_jwt_extended import get_jwt
             current_identity = get_jwt_identity()
+            claims = get_jwt()
 
             # Check if user is an admin
-            if current_identity.get('user_type') != 'admin':
+            if claims.get('user_type') != 'admin':
                 return {'error': 'Access denied. Admin authentication required.'}, 403
 
             # Get current admin
-            admin_id = current_identity.get('user_id')
+            admin_id = int(current_identity)
             admin = Admin.query.filter_by(admin_id=admin_id, is_deleted=False).first()
 
             if not admin:
@@ -872,14 +880,16 @@ class ServiceStatus(Resource):
     def patch(self, service_id):
         """Update service active status (Role-based permissions apply)"""
         try:
+            from flask_jwt_extended import get_jwt
             current_identity = get_jwt_identity()
+            claims = get_jwt()
 
             # Check if user is an admin
-            if current_identity.get('user_type') != 'admin':
+            if claims.get('user_type') != 'admin':
                 return {'error': 'Access denied. Admin authentication required.'}, 403
 
             # Get current admin
-            admin_id = current_identity.get('user_id')
+            admin_id = int(current_identity)
             admin = Admin.query.filter_by(admin_id=admin_id, is_deleted=False).first()
 
             if not admin:
@@ -1178,14 +1188,16 @@ class BookingStatus(Resource):
     def patch(self, booking_id):
         """Update booking status (Role-based permissions apply)"""
         try:
+            from flask_jwt_extended import get_jwt
             current_identity = get_jwt_identity()
+            claims = get_jwt()
 
             # Check if user is an admin
-            if current_identity.get('user_type') != 'admin':
+            if claims.get('user_type') != 'admin':
                 return {'error': 'Access denied. Admin authentication required.'}, 403
 
             # Get current admin
-            admin_id = current_identity.get('user_id')
+            admin_id = int(current_identity)
             admin = Admin.query.filter_by(admin_id=admin_id, is_deleted=False).first()
 
             if not admin:
@@ -1720,14 +1732,16 @@ class CustomerReportStatus(Resource):
     def patch(self, report_id):
         """Update customer report status and add admin response (Admin access required)"""
         try:
+            from flask_jwt_extended import get_jwt
             current_identity = get_jwt_identity()
+            claims = get_jwt()
 
             # Check if user is an admin
-            if current_identity.get('user_type') != 'admin':
+            if claims.get('user_type') != 'admin':
                 return {'error': 'Access denied. Admin authentication required.'}, 403
 
             # Get current admin
-            admin_id = current_identity.get('user_id')
+            admin_id = int(current_identity)
             admin = Admin.query.filter_by(admin_id=admin_id, is_deleted=False).first()
 
             if not admin:
