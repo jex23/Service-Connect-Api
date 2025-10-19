@@ -14,7 +14,7 @@ class User(db.Model):
     password_hash = db.Column(db.String(255), nullable=False)
     id_front = db.Column(db.String(255), nullable=True)
     id_back = db.Column(db.String(255), nullable=True)
-    status = db.Column(db.Enum('active', 'inactive', 'suspended', name='user_status_enum'), nullable=False, default='active')
+    status = db.Column(db.Enum('active', 'inactive', 'suspended', 'for_verification', name='user_status_enum'), nullable=False, default='active')
     created_at = db.Column(db.TIMESTAMP, default=datetime.utcnow)
     updated_at = db.Column(db.TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -40,7 +40,7 @@ class Provider(db.Model):
     image_logo = db.Column(db.String(255), nullable=True)
     about = db.Column(db.Text, nullable=True)
     is_active = db.Column(db.Boolean, nullable=False, default=True)
-    status = db.Column(db.Enum('active', 'inactive', 'suspended', name='provider_status_enum'), nullable=False, default='active')
+    status = db.Column(db.Enum('active', 'inactive', 'suspended', 'for_verification', name='provider_status_enum'), nullable=False, default='active')
     created_at = db.Column(db.TIMESTAMP, default=datetime.utcnow)
     updated_at = db.Column(db.TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow)
     

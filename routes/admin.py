@@ -5,6 +5,7 @@ from models import db, Admin, Provider, User, ProviderService, ServiceCategory, 
 from datetime import datetime
 from functools import wraps
 from sqlalchemy import func
+from utils.email import send_provider_verification_email, send_user_verification_email, send_account_status_change_email
 
 # Create namespace
 admin_ns = Namespace('admin', description='Admin operations')
@@ -69,13 +70,13 @@ provider_model = admin_ns.model('Provider', {
     'image_logo': fields.String(description='Business logo'),
     'about': fields.String(description='About'),
     'is_active': fields.Boolean(description='Is active'),
-    'status': fields.String(description='Status', enum=['active', 'inactive', 'suspended']),
+    'status': fields.String(description='Status', enum=['active', 'inactive', 'suspended', 'for_verification']),
     'created_at': fields.DateTime(description='Created at'),
     'updated_at': fields.DateTime(description='Updated at')
 })
 
 update_status_model = admin_ns.model('UpdateProviderStatus', {
-    'status': fields.String(required=True, description='Provider status', enum=['active', 'inactive', 'suspended'])
+    'status': fields.String(required=True, description='Provider status', enum=['active', 'inactive', 'suspended', 'for_verification'])
 })
 
 # User models
@@ -86,13 +87,13 @@ user_model = admin_ns.model('User', {
     'address': fields.String(description='Address'),
     'id_front': fields.String(description='ID front'),
     'id_back': fields.String(description='ID back'),
-    'status': fields.String(description='Status', enum=['active', 'inactive', 'suspended']),
+    'status': fields.String(description='Status', enum=['active', 'inactive', 'suspended', 'for_verification']),
     'created_at': fields.DateTime(description='Created at'),
     'updated_at': fields.DateTime(description='Updated at')
 })
 
 update_user_status_model = admin_ns.model('UpdateUserStatus', {
-    'status': fields.String(required=True, description='User status', enum=['active', 'inactive', 'suspended'])
+    'status': fields.String(required=True, description='User status', enum=['active', 'inactive', 'suspended', 'for_verification'])
 })
 
 # Service models
@@ -249,6 +250,52 @@ report_model = admin_ns.model('CustomerReport', {
 update_report_status_model = admin_ns.model('UpdateReportStatus', {
     'status': fields.String(required=True, description='Report status', enum=['Pending', 'Under Review', 'Resolved', 'Rejected']),
     'admin_response': fields.String(description='Admin response/notes')
+})
+
+# Dashboard summary models
+dashboard_users_summary_model = admin_ns.model('DashboardUsersSummary', {
+    'total_users': fields.Integer(description='Total number of users'),
+    'active_users': fields.Integer(description='Active users'),
+    'inactive_users': fields.Integer(description='Inactive users'),
+    'suspended_users': fields.Integer(description='Suspended users'),
+    'pending_verification_users': fields.Integer(description='Users pending verification')
+})
+
+dashboard_providers_summary_model = admin_ns.model('DashboardProvidersSummary', {
+    'total_providers': fields.Integer(description='Total number of providers'),
+    'active_providers': fields.Integer(description='Active providers'),
+    'inactive_providers': fields.Integer(description='Inactive providers'),
+    'suspended_providers': fields.Integer(description='Suspended providers'),
+    'pending_verification_providers': fields.Integer(description='Providers pending verification')
+})
+
+dashboard_services_summary_model = admin_ns.model('DashboardServicesSummary', {
+    'total_services': fields.Integer(description='Total number of services'),
+    'active_services': fields.Integer(description='Active services'),
+    'inactive_services': fields.Integer(description='Inactive services')
+})
+
+dashboard_bookings_summary_model = admin_ns.model('DashboardBookingsSummary', {
+    'total_bookings': fields.Integer(description='Total number of bookings'),
+    'pending_bookings': fields.Integer(description='Pending bookings'),
+    'confirmed_bookings': fields.Integer(description='Confirmed bookings'),
+    'completed_bookings': fields.Integer(description='Completed bookings'),
+    'cancelled_bookings': fields.Integer(description='Cancelled bookings')
+})
+
+dashboard_sales_summary_model = admin_ns.model('DashboardSalesSummary', {
+    'total_sales': fields.Float(description='Total sales revenue (from paid bookings)'),
+    'total_paid_bookings': fields.Integer(description='Total number of paid bookings'),
+    'pending_payments': fields.Integer(description='Number of pending payments'),
+    'failed_payments': fields.Integer(description='Number of failed payments')
+})
+
+dashboard_summary_model = admin_ns.model('DashboardSummary', {
+    'users': fields.Nested(dashboard_users_summary_model, description='Users summary'),
+    'providers': fields.Nested(dashboard_providers_summary_model, description='Providers summary'),
+    'services': fields.Nested(dashboard_services_summary_model, description='Services summary'),
+    'bookings': fields.Nested(dashboard_bookings_summary_model, description='Bookings summary'),
+    'sales': fields.Nested(dashboard_sales_summary_model, description='Sales summary')
 })
 
 # Helper decorator for superadmin-only access
@@ -474,6 +521,103 @@ class AdminProfile(Resource):
         except Exception as e:
             return {'error': f'Failed to get profile: {str(e)}'}, 500
 
+@admin_ns.route('/dashboard/summary')
+class DashboardSummary(Resource):
+    @admin_ns.doc(security='Bearer')
+    @admin_ns.marshal_with(dashboard_summary_model, code=200)
+    @admin_ns.response(401, 'Unauthorized', error_model)
+    @admin_ns.response(403, 'Forbidden - Admin access required', error_model)
+    @admin_required
+    def get(self):
+        """Get dashboard summary with total counts for users, providers, services, bookings, and sales"""
+        try:
+            # Users Summary
+            total_users = User.query.count()
+            active_users = User.query.filter_by(status='active').count()
+            inactive_users = User.query.filter_by(status='inactive').count()
+            suspended_users = User.query.filter_by(status='suspended').count()
+            pending_verification_users = User.query.filter_by(status='for_verification').count()
+
+            # Providers Summary
+            total_providers = Provider.query.count()
+            active_providers = Provider.query.filter_by(status='active').count()
+            inactive_providers = Provider.query.filter_by(status='inactive').count()
+            suspended_providers = Provider.query.filter_by(status='suspended').count()
+            pending_verification_providers = Provider.query.filter_by(status='for_verification').count()
+
+            # Services Summary
+            total_services = ProviderService.query.count()
+            active_services = ProviderService.query.filter_by(is_active=True).count()
+            inactive_services = ProviderService.query.filter_by(is_active=False).count()
+
+            # Bookings Summary
+            total_bookings = ServiceBooking.query.count()
+            pending_bookings = ServiceBooking.query.filter_by(status='Pending').count()
+            confirmed_bookings = ServiceBooking.query.filter_by(status='Confirmed').count()
+            completed_bookings = ServiceBooking.query.filter_by(status='Completed').count()
+            cancelled_bookings = ServiceBooking.query.filter_by(status='Cancelled').count()
+
+            # Sales Summary - Calculate from paid bookings
+            paid_payments = db.session.query(
+                PaymentStatus,
+                ProviderService
+            ).join(
+                ServiceBooking, PaymentStatus.booking_id == ServiceBooking.id
+            ).join(
+                ProviderService, ServiceBooking.provider_service_id == ProviderService.id
+            ).filter(
+                PaymentStatus.status == 'Paid'
+            ).all()
+
+            total_sales = 0
+            for payment, service in paid_payments:
+                if service.price_decimal:
+                    total_sales += float(service.price_decimal)
+
+            total_paid_bookings = len(paid_payments)
+
+            # Count payment statuses
+            pending_payments = PaymentStatus.query.filter_by(status='Pending').count()
+            failed_payments = PaymentStatus.query.filter_by(status='Failed').count()
+
+            return {
+                'users': {
+                    'total_users': total_users,
+                    'active_users': active_users,
+                    'inactive_users': inactive_users,
+                    'suspended_users': suspended_users,
+                    'pending_verification_users': pending_verification_users
+                },
+                'providers': {
+                    'total_providers': total_providers,
+                    'active_providers': active_providers,
+                    'inactive_providers': inactive_providers,
+                    'suspended_providers': suspended_providers,
+                    'pending_verification_providers': pending_verification_providers
+                },
+                'services': {
+                    'total_services': total_services,
+                    'active_services': active_services,
+                    'inactive_services': inactive_services
+                },
+                'bookings': {
+                    'total_bookings': total_bookings,
+                    'pending_bookings': pending_bookings,
+                    'confirmed_bookings': confirmed_bookings,
+                    'completed_bookings': completed_bookings,
+                    'cancelled_bookings': cancelled_bookings
+                },
+                'sales': {
+                    'total_sales': round(total_sales, 2),
+                    'total_paid_bookings': total_paid_bookings,
+                    'pending_payments': pending_payments,
+                    'failed_payments': failed_payments
+                }
+            }
+
+        except Exception as e:
+            return {'error': f'Failed to get dashboard summary: {str(e)}'}, 500
+
 @admin_ns.route('/list')
 class AdminList(Resource):
     @admin_ns.doc(security='Bearer')
@@ -599,8 +743,8 @@ class ProviderStatus(Resource):
             new_status = data['status']
 
             # Validate status value
-            if new_status not in ['active', 'inactive', 'suspended']:
-                return {'error': 'Invalid status. Must be: active, inactive, or suspended'}, 400
+            if new_status not in ['active', 'inactive', 'suspended', 'for_verification']:
+                return {'error': 'Invalid status. Must be: active, inactive, suspended, or for_verification'}, 400
 
             # Role-based permissions
             # Moderators can only set to 'inactive'
@@ -629,6 +773,32 @@ class ProviderStatus(Resource):
                 provider.is_active = True
 
             db.session.commit()
+
+            # Send email notification for status change
+            try:
+                # Special verification email for initial approval
+                if new_status == 'active' and old_status == 'for_verification':
+                    email_result = send_provider_verification_email(
+                        provider.email,
+                        provider.full_name,
+                        provider.business_name
+                    )
+                # Generic status change email for other transitions
+                elif new_status in ['active', 'inactive', 'suspended'] and old_status != 'for_verification':
+                    email_result = send_account_status_change_email(
+                        provider.email,
+                        provider.full_name,
+                        new_status,
+                        account_type='provider',
+                        business_name=provider.business_name
+                    )
+                else:
+                    email_result = None
+
+                if email_result and not email_result['success']:
+                    print(f"Warning: Failed to send email to {provider.email}: {email_result['message']}")
+            except Exception as e:
+                print(f"Warning: Error sending email: {str(e)}")
 
             return {
                 'message': f'Provider status updated from {old_status} to {new_status}',
@@ -728,8 +898,8 @@ class UserStatus(Resource):
             new_status = data['status']
 
             # Validate status value
-            if new_status not in ['active', 'inactive', 'suspended']:
-                return {'error': 'Invalid status. Must be: active, inactive, or suspended'}, 400
+            if new_status not in ['active', 'inactive', 'suspended', 'for_verification']:
+                return {'error': 'Invalid status. Must be: active, inactive, suspended, or for_verification'}, 400
 
             # Role-based permissions
             # Moderators can only set to 'inactive'
@@ -752,6 +922,30 @@ class UserStatus(Resource):
             user.status = new_status
 
             db.session.commit()
+
+            # Send email notification for status change
+            try:
+                # Special verification email for initial approval
+                if new_status == 'active' and old_status == 'for_verification':
+                    email_result = send_user_verification_email(
+                        user.email,
+                        user.full_name
+                    )
+                # Generic status change email for other transitions
+                elif new_status in ['active', 'inactive', 'suspended'] and old_status != 'for_verification':
+                    email_result = send_account_status_change_email(
+                        user.email,
+                        user.full_name,
+                        new_status,
+                        account_type='user'
+                    )
+                else:
+                    email_result = None
+
+                if email_result and not email_result['success']:
+                    print(f"Warning: Failed to send email to {user.email}: {email_result['message']}")
+            except Exception as e:
+                print(f"Warning: Error sending email: {str(e)}")
 
             return {
                 'message': f'User status updated from {old_status} to {new_status}',
@@ -1800,3 +1994,139 @@ class CustomerReportStatus(Resource):
         except Exception as e:
             db.session.rollback()
             return {'error': f'Failed to update report status: {str(e)}'}, 500
+
+@admin_ns.route('/users/pending-verification')
+class UsersPendingVerification(Resource):
+    @admin_ns.doc(security='Bearer')
+    @admin_ns.marshal_list_with(user_model, code=200)
+    @admin_ns.response(401, 'Unauthorized', error_model)
+    @admin_ns.response(403, 'Forbidden - Admin access required', error_model)
+    @admin_required
+    def get(self):
+        """Get list of all users pending verification (status='for_verification')"""
+        try:
+            users = User.query.filter_by(status='for_verification').order_by(User.created_at.desc()).all()
+
+            result = []
+            for user in users:
+                result.append({
+                    'id': user.id,
+                    'full_name': user.full_name,
+                    'email': user.email,
+                    'address': user.address,
+                    'id_front': user.id_front,
+                    'id_back': user.id_back,
+                    'status': user.status,
+                    'created_at': user.created_at.isoformat() if user.created_at else None,
+                    'updated_at': user.updated_at.isoformat() if user.updated_at else None
+                })
+
+            return result
+
+        except Exception as e:
+            return {'error': f'Failed to get users pending verification: {str(e)}'}, 500
+
+@admin_ns.route('/providers/pending-verification')
+class ProvidersPendingVerification(Resource):
+    @admin_ns.doc(security='Bearer')
+    @admin_ns.marshal_list_with(provider_model, code=200)
+    @admin_ns.response(401, 'Unauthorized', error_model)
+    @admin_ns.response(403, 'Forbidden - Admin access required', error_model)
+    @admin_required
+    def get(self):
+        """Get list of all providers pending verification (status='for_verification')"""
+        try:
+            providers = Provider.query.filter_by(status='for_verification').order_by(Provider.created_at.desc()).all()
+
+            result = []
+            for provider in providers:
+                result.append({
+                    'id': provider.id,
+                    'business_name': provider.business_name,
+                    'full_name': provider.full_name,
+                    'email': provider.email,
+                    'contact_number': provider.contact_number,
+                    'address': provider.address,
+                    'bir_id_front': provider.bir_id_front,
+                    'bir_id_back': provider.bir_id_back,
+                    'business_permit': provider.business_permit,
+                    'image_logo': provider.image_logo,
+                    'about': provider.about,
+                    'is_active': provider.is_active,
+                    'status': provider.status,
+                    'created_at': provider.created_at.isoformat() if provider.created_at else None,
+                    'updated_at': provider.updated_at.isoformat() if provider.updated_at else None
+                })
+
+            return result
+
+        except Exception as e:
+            return {'error': f'Failed to get providers pending verification: {str(e)}'}, 500
+
+@admin_ns.route('/users/<int:user_id>')
+class UserDetail(Resource):
+    @admin_ns.doc(security='Bearer')
+    @admin_ns.marshal_with(user_model, code=200)
+    @admin_ns.response(401, 'Unauthorized', error_model)
+    @admin_ns.response(403, 'Forbidden - Admin access required', error_model)
+    @admin_ns.response(404, 'User not found', error_model)
+    @admin_required
+    def get(self, user_id):
+        """Get specific user details including ID document images"""
+        try:
+            user = User.query.get(user_id)
+
+            if not user:
+                return {'error': 'User not found'}, 404
+
+            return {
+                'id': user.id,
+                'full_name': user.full_name,
+                'email': user.email,
+                'address': user.address,
+                'id_front': user.id_front,
+                'id_back': user.id_back,
+                'status': user.status,
+                'created_at': user.created_at.isoformat() if user.created_at else None,
+                'updated_at': user.updated_at.isoformat() if user.updated_at else None
+            }
+
+        except Exception as e:
+            return {'error': f'Failed to get user details: {str(e)}'}, 500
+
+@admin_ns.route('/providers/<int:provider_id>')
+class ProviderDetail(Resource):
+    @admin_ns.doc(security='Bearer')
+    @admin_ns.marshal_with(provider_model, code=200)
+    @admin_ns.response(401, 'Unauthorized', error_model)
+    @admin_ns.response(403, 'Forbidden - Admin access required', error_model)
+    @admin_ns.response(404, 'Provider not found', error_model)
+    @admin_required
+    def get(self, provider_id):
+        """Get specific provider details including BIR ID, business permit, and logo images"""
+        try:
+            provider = Provider.query.get(provider_id)
+
+            if not provider:
+                return {'error': 'Provider not found'}, 404
+
+            return {
+                'id': provider.id,
+                'business_name': provider.business_name,
+                'full_name': provider.full_name,
+                'email': provider.email,
+                'contact_number': provider.contact_number,
+                'address': provider.address,
+                'bir_id_front': provider.bir_id_front,
+                'bir_id_back': provider.bir_id_back,
+                'business_permit': provider.business_permit,
+                'image_logo': provider.image_logo,
+                'about': provider.about,
+                'is_active': provider.is_active,
+                'status': provider.status,
+                'created_at': provider.created_at.isoformat() if provider.created_at else None,
+                'updated_at': provider.updated_at.isoformat() if provider.updated_at else None
+            }
+
+        except Exception as e:
+            return {'error': f'Failed to get provider details: {str(e)}'}, 500

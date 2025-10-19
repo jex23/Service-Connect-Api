@@ -268,7 +268,8 @@ class UserRegister(Resource):
                 email=data['email'],
                 address=data['address'],
                 id_front=uploaded_files.get('id_front') or data.get('id_front'),
-                id_back=uploaded_files.get('id_back') or data.get('id_back')
+                id_back=uploaded_files.get('id_back') or data.get('id_back'),
+                status='for_verification'
             )
             user.set_password(data['password'])
 
@@ -276,11 +277,8 @@ class UserRegister(Resource):
             db.session.commit()
 
             # Create access token
-<<<<<<< HEAD
             access_token = create_access_token(identity={'user_id': user.id, 'user_type': 'user'})
-=======
             access_token = create_access_token(identity=str(user.id), additional_claims={'user_type': 'user'})
->>>>>>> 29ce3af
 
             return {
                 'message': 'User registered successfully',
@@ -294,7 +292,7 @@ class UserRegister(Resource):
                     'id_back': user.id_back,
                     'user_type': 'user'
                 }
-            }, 201
+            },
 
         except Exception as e:
             db.session.rollback()
@@ -316,9 +314,12 @@ class UserLogin(Resource):
                 return {'error': 'Missing email or password'}, 400
             
             user = User.query.filter_by(email=data['email']).first()
-            
+
             if not user or not user.check_password(data['password']):
                 return {'error': 'Invalid email or password'}, 401
+
+            if user.status != 'active':
+                return {'error': f'Account is {user.status}. Only active accounts can login.'}, 403
 
             access_token = create_access_token(identity=str(user.id), additional_claims={'user_type': 'user'})
             
@@ -492,7 +493,8 @@ class ProviderRegister(Resource):
                 business_permit=uploaded_files.get('business_permit') or data.get('business_permit'),
                 image_logo=uploaded_files.get('image_logo') or data.get('image_logo'),
                 about=data.get('about'),
-                is_active=True  # Default to active
+                is_active=True,  # Default to active
+                status='for_verification'
             )
             print("Provider object created successfully")
             
@@ -585,12 +587,12 @@ class ProviderLogin(Resource):
                 return {'error': 'Missing email or password'}, 400
             
             provider = Provider.query.filter_by(email=data['email']).first()
-            
+
             if not provider or not provider.check_password(data['password']):
                 return {'error': 'Invalid email or password'}, 401
-            
-            if not provider.is_active:
-                return {'error': 'Provider account is inactive'}, 403
+
+            if provider.status != 'active':
+                return {'error': f'Account is {provider.status}. Only active accounts can login.'}, 403
 
             access_token = create_access_token(identity=str(provider.id), additional_claims={'user_type': 'provider'})
             
@@ -691,7 +693,8 @@ class UserRegisterWithUpload(Resource):
                 email=data['email'],
                 address=data['address'],
                 id_front=id_front_url,
-                id_back=id_back_url
+                id_back=id_back_url,
+                status='for_verification'
             )
             user.set_password(data['password'])
 
@@ -828,7 +831,8 @@ class ProviderRegisterWithUpload(Resource):
                 business_permit=business_permit_url,
                 image_logo=image_logo_url,
                 about=data.get('about'),
-                is_active=True
+                is_active=True,
+                status='for_verification'
             )
             provider.set_password(data['password'])
 
