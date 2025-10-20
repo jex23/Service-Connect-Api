@@ -10,7 +10,15 @@ import os
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app, origins="*")
+CORS(app,
+     resources={r"/api/*": {
+         "origins": "*",
+         "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+         "allow_headers": ["Content-Type", "Authorization", "Accept"],
+         "expose_headers": ["Content-Type", "Authorization"],
+         "supports_credentials": True,
+         "max_age": 3600
+     }})
 
 # Configuration
 db_user = os.getenv('DB_USER', 'james23')
@@ -90,6 +98,15 @@ def handle_authorization():
         print(f"DEBUG: Authorization header: {request.headers.get('Authorization', 'NOT FOUND')}")
         print(f"DEBUG: Method: {request.method}")
         print("---")
+
+@app.after_request
+def after_request(response):
+    # Add CORS headers to all responses
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,Accept')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS')
+    response.headers.add('Access-Control-Max-Age', '3600')
+    return response
 
 # Initialize Flask-RESTX with authentication
 authorizations = {
