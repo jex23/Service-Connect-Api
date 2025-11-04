@@ -1600,7 +1600,7 @@ booking_schedule_check_model = users_ns.model('BookingScheduleCheck', {
 booking_schedule_response_model = users_ns.model('BookingScheduleResponse', {
     'provider_service': fields.Raw(description='Provider service information'),
     'schedule': fields.Raw(description='Provider schedule for the day'),
-    'available_slots': fields.List(fields.String(), description='Available booking time slots'),
+    'available_slots': fields.List(fields.Raw(), description='Available booking time slots with availability status'),
     'existing_bookings': fields.List(fields.Raw(), description='All existing bookings for this day/service')
 })
 
@@ -1648,14 +1648,19 @@ class BookingScheduleCheck(Resource):
 **Available Slots Logic:**
 - Based on provider's schedule for the day
 - Considers service duration to calculate slots
-- Shows available slots even if there are existing bookings
+- Each slot includes 'time' and 'is_available' status
 - Time slots are generated in 30-minute intervals by default
+- Checks for conflicts across ALL provider services (not just this service)
+- Provider cannot be double-booked even for different services
+- Considers service duration for overlap detection
+- Cancelled bookings are not counted as conflicts
 
 **Existing Bookings:**
-- Returns ALL bookings (Pending, Confirmed, Completed, Cancelled)
+- Returns ALL bookings for this provider across ALL services (Pending, Confirmed, Completed, Cancelled)
 - Includes user information for each booking
 - Shows booking time and status
 - Includes payment status if available
+- Used to determine slot availability and prevent double-booking
 
 **Business Rules:**
 - Provider service must exist and be active
@@ -1736,34 +1741,61 @@ class BookingScheduleCheck(Resource):
                     'existing_bookings': []
                 }, 200
             
-            # Get all existing bookings for this service and day
+            # Get all existing bookings for this provider and day (across all services)
             bookings_query = ServiceBooking.query.filter_by(
-                provider_service_id=provider_service_id,
+                provider_id=provider_service.provider_id,
                 booking_day=booking_day
             )
-            
+
             # Filter by specific date if provided
             if check_date:
                 check_dt = datetime.strptime(check_date, '%Y-%m-%d').date()
                 bookings_query = bookings_query.filter(
                     ServiceBooking.booking_date == check_dt
                 )
-            
+
             existing_bookings = bookings_query.all()
             
-            # Generate available time slots
+            # Generate available time slots and check for conflicts
             start_time = schedule.start_time
             end_time = schedule.end_time
             service_duration = provider_service.duration_minutes or 60  # Default 60 minutes
             slot_interval = 30  # 30-minute intervals
-            
+
+            # Helper function to check if a slot conflicts with existing bookings
+            def is_slot_available(slot_time_dt, slot_duration, bookings):
+                slot_end = slot_time_dt + timedelta(minutes=slot_duration)
+
+                for booking in bookings:
+                    # Skip cancelled bookings
+                    if booking.status == 'Cancelled':
+                        continue
+
+                    # Get booking service to check its duration
+                    booking_service = ProviderService.query.get(booking.provider_service_id)
+                    booking_duration = booking_service.duration_minutes if booking_service else 60
+
+                    booking_time_dt = datetime.combine(datetime.today(), booking.booking_time)
+                    booking_end = booking_time_dt + timedelta(minutes=booking_duration)
+
+                    # Check for time overlap
+                    if (slot_time_dt < booking_end) and (slot_end > booking_time_dt):
+                        return False
+
+                return True
+
             available_slots = []
             current_time = datetime.combine(datetime.today(), start_time)
             end_datetime = datetime.combine(datetime.today(), end_time)
-            
+
             while current_time + timedelta(minutes=service_duration) <= end_datetime:
                 time_slot = current_time.strftime('%H:%M')
-                available_slots.append(time_slot)
+                is_available = is_slot_available(current_time, service_duration, existing_bookings)
+
+                available_slots.append({
+                    'time': time_slot,
+                    'is_available': is_available
+                })
                 current_time += timedelta(minutes=slot_interval)
             
             # Format existing bookings with details
