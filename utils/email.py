@@ -1,5 +1,7 @@
 import smtplib
 import os
+import random
+import string
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime
@@ -588,3 +590,282 @@ def send_account_status_change_email(email, name, new_status, account_type='user
     """
 
     return send_email(email, subject, html_content, text_content)
+
+
+def generate_otp(length=6):
+    """
+    Generate a random OTP code
+
+    Args:
+        length (int): Length of the OTP code (default 6)
+
+    Returns:
+        str: Generated OTP code
+    """
+    return ''.join(random.choices(string.digits, k=length))
+
+
+def send_password_reset_otp_email(email, name, otp_code, account_type='user'):
+    """
+    Send password reset OTP email
+
+    Args:
+        email (str): Account email address
+        name (str): Account holder's full name
+        otp_code (str): OTP code for password reset
+        account_type (str): 'user' or 'provider'
+
+    Returns:
+        dict: {'success': bool, 'message': str}
+    """
+    subject = "Password Reset Request - Service Connect"
+
+    # HTML email template
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <style>
+            body {{
+                font-family: Arial, sans-serif;
+                line-height: 1.6;
+                color: #333;
+                max-width: 600px;
+                margin: 0 auto;
+                padding: 20px;
+            }}
+            .header {{
+                background-color: #FF9800;
+                color: white;
+                padding: 30px 20px;
+                text-align: center;
+                border-radius: 5px 5px 0 0;
+            }}
+            .content {{
+                background-color: #f9f9f9;
+                padding: 30px 20px;
+                border-left: 1px solid #ddd;
+                border-right: 1px solid #ddd;
+            }}
+            .footer {{
+                background-color: #333;
+                color: white;
+                padding: 20px;
+                text-align: center;
+                font-size: 12px;
+                border-radius: 0 0 5px 5px;
+            }}
+            .otp-box {{
+                background-color: #fff;
+                padding: 20px;
+                border: 2px dashed #FF9800;
+                border-radius: 5px;
+                text-align: center;
+                margin: 20px 0;
+            }}
+            .otp-code {{
+                font-size: 32px;
+                font-weight: bold;
+                color: #FF9800;
+                letter-spacing: 5px;
+                font-family: 'Courier New', monospace;
+            }}
+            .warning {{
+                background-color: #fff3cd;
+                padding: 15px;
+                border-left: 4px solid #ffc107;
+                margin: 20px 0;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <h1>🔐 Password Reset Request</h1>
+        </div>
+        <div class="content">
+            <p>Dear {name},</p>
+
+            <p>We received a request to reset the password for your Service Connect {account_type} account.</p>
+
+            <div class="otp-box">
+                <p style="margin: 0 0 10px 0; font-size: 14px; color: #666;">Your One-Time Password (OTP)</p>
+                <div class="otp-code">{otp_code}</div>
+                <p style="margin: 10px 0 0 0; font-size: 12px; color: #666;">This code will expire in 15 minutes</p>
+            </div>
+
+            <p><strong>How to reset your password:</strong></p>
+            <ol>
+                <li>Enter the OTP code above in the password reset form</li>
+                <li>Create a new password for your account</li>
+                <li>Confirm your new password</li>
+            </ol>
+
+            <div class="warning">
+                <p><strong>⚠️ Security Notice:</strong></p>
+                <ul style="margin: 5px 0;">
+                    <li>Do not share this OTP with anyone</li>
+                    <li>Service Connect staff will never ask for your OTP</li>
+                    <li>This OTP is valid for 15 minutes only</li>
+                </ul>
+            </div>
+
+            <p>If you did not request a password reset, please ignore this email or contact our support team immediately if you suspect unauthorized access to your account.</p>
+
+            <p>Best regards,<br>
+            <strong>The Service Connect Team</strong></p>
+        </div>
+        <div class="footer">
+            <p>&copy; {datetime.now().year} Service Connect. All rights reserved.</p>
+            <p>This is an automated message, please do not reply to this email.</p>
+        </div>
+    </body>
+    </html>
+    """
+
+    # Plain text version
+    text_content = f"""
+    Dear {name},
+
+    Password Reset Request
+
+    We received a request to reset the password for your Service Connect {account_type} account.
+
+    Your One-Time Password (OTP): {otp_code}
+
+    This code will expire in 15 minutes.
+
+    How to reset your password:
+    1. Enter the OTP code above in the password reset form
+    2. Create a new password for your account
+    3. Confirm your new password
+
+    Security Notice:
+    - Do not share this OTP with anyone
+    - Service Connect staff will never ask for your OTP
+    - This OTP is valid for 15 minutes only
+
+    If you did not request a password reset, please ignore this email or contact our support team immediately if you suspect unauthorized access to your account.
+
+    Best regards,
+    The Service Connect Team
+
+    © {datetime.now().year} Service Connect. All rights reserved.
+    This is an automated message, please do not reply to this email.
+    """
+
+    return send_email(email, subject, html_content, text_content)
+
+
+def send_booking_status_update_email(user_email, user_name, provider_name, service_title, booking_date, booking_time, old_status, new_status, booking_id):
+    """
+    Send booking status update notification email to user
+
+    Args:
+        user_email (str): User's email address
+        user_name (str): User's full name
+        provider_name (str): Provider's full name or business name
+        service_title (str): Title of the service booked
+        booking_date (str): Booking date (formatted)
+        booking_time (str): Booking time (formatted)
+        old_status (str): Previous booking status
+        new_status (str): New booking status
+        booking_id (int): Booking ID
+
+    Returns:
+        dict: {'success': bool, 'message': str}
+    """
+    # Configure email based on new status
+    if new_status == 'Confirmed':
+        subject = "Booking Confirmed - Service Connect"
+        header_color = "#4CAF50"  # Green
+        icon = "Confirmed"
+        title = "Booking Confirmed!"
+        message = f"Great news! Your booking with {provider_name} has been confirmed."
+        booking_id_label = booking_id
+    elif new_status == 'Completed':
+        subject = "Service Completed - Service Connect"
+        header_color = "#2196F3"  # Blue
+        icon = "Completed"
+        title = "Service Completed"
+        message = f"Your service with {provider_name} has been marked as completed."
+        booking_id_label = booking_id
+    elif new_status == 'Cancelled':
+        subject = "Booking Cancelled - Service Connect"
+        header_color = "#f44336"  # Red
+        icon = "Cancelled"
+        title = "Booking Cancelled"
+        message = f"Your booking with {provider_name} has been cancelled."
+        booking_id_label = booking_id
+    else:
+        subject = "Booking Update - Service Connect"
+        header_color = "#FF9800"  # Orange
+        icon = "Updated"
+        title = "Booking Updated"
+        message = f"Your booking with {provider_name} has been updated."
+        booking_id_label = booking_id
+
+    # HTML email template
+    html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }}
+        .header {{ background-color: {header_color}; color: white; padding: 30px 20px; text-align: center; border-radius: 5px 5px 0 0; }}
+        .content {{ background-color: #f9f9f9; padding: 30px 20px; border-left: 1px solid #ddd; border-right: 1px solid #ddd; }}
+        .footer {{ background-color: #333; color: white; padding: 20px; text-align: center; font-size: 12px; border-radius: 0 0 5px 5px; }}
+        .highlight {{ background-color: #fff; padding: 15px; border-left: 4px solid {header_color}; margin: 20px 0; }}
+    </style>
+</head>
+<body>
+    <div class="header"><h1>{title}</h1></div>
+    <div class="content">
+        <p>Dear {user_name},</p>
+        <p>{message}</p>
+        <div class="highlight">
+            <p><strong>Booking Details:</strong></p>
+            <ul>
+                <li><strong>Service:</strong> {service_title}</li>
+                <li><strong>Provider:</strong> {provider_name}</li>
+                <li><strong>Date:</strong> {booking_date}</li>
+                <li><strong>Time:</strong> {booking_time}</li>
+                <li><strong>Booking ID:</strong> #{booking_id_label}</li>
+                <li><strong>Status:</strong> {new_status}</li>
+            </ul>
+        </div>
+        <p>If you have any questions or concerns, please don't hesitate to contact our support team at <a href="mailto:serviceconnectassistdesk@gmail.com">serviceconnectassistdesk@gmail.com</a>.</p>
+        <p>Thank you for using Service Connect!</p>
+        <p>Best regards,<br><strong>The Service Connect Team</strong></p>
+    </div>
+    <div class="footer">
+        <p>&copy; {datetime.now().year} Service Connect. All rights reserved.</p>
+        <p>This is an automated message, please do not reply to this email.</p>
+    </div>
+</body>
+</html>"""
+
+    # Plain text version
+    text_content = f"""Dear {user_name},
+
+{title}
+
+{message}
+
+Booking Details:
+- Service: {service_title}
+- Provider: {provider_name}
+- Date: {booking_date}
+- Time: {booking_time}
+- Booking ID: #{booking_id_label}
+- Status: {new_status}
+
+If you have any questions or concerns, please contact our support team at serviceconnectassistdesk@gmail.com.
+
+Thank you for using Service Connect!
+
+Best regards,
+The Service Connect Team
+
+© {datetime.now().year} Service Connect. All rights reserved.
+This is an automated message, please do not reply to this email."""
+
+    return send_email(user_email, subject, html_content, text_content)

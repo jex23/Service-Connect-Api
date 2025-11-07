@@ -4,7 +4,11 @@
       "Bash(mkdir:*)",
       "Bash(python3:*)",
       "Bash(curl:*)",
-      "Read(//Users/jamesgalos/Documents/**)"
+      "Read(//Users/jamesgalos/Documents/**)",
+      "Bash(python:*)",
+      "Bash(cat:*)",
+      "Bash(email_backup.py)",
+      "Bash(email.py)"
     ],
     "deny": []
   }

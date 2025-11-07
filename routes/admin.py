@@ -2130,3 +2130,137 @@ class ProviderDetail(Resource):
 
         except Exception as e:
             return {'error': f'Failed to get provider details: {str(e)}'}, 500
+
+@admin_ns.route('/users/<int:user_id>/approve')
+class UserApprove(Resource):
+    @admin_ns.doc(security='Bearer')
+    @admin_ns.response(200, 'User approved successfully', success_model)
+    @admin_ns.response(401, 'Unauthorized', error_model)
+    @admin_ns.response(403, 'Forbidden - Admin access required', error_model)
+    @admin_ns.response(404, 'User not found', error_model)
+    @jwt_required()
+    def post(self, user_id):
+        """Approve user (set status to active and send verification email)"""
+        try:
+            from flask_jwt_extended import get_jwt
+            current_identity = get_jwt_identity()
+            claims = get_jwt()
+
+            # Check if user is an admin
+            if claims.get('user_type') != 'admin':
+                return {'error': 'Access denied. Admin authentication required.'}, 403
+
+            # Get current admin
+            admin_id = int(current_identity)
+            admin = Admin.query.filter_by(admin_id=admin_id, is_deleted=False).first()
+
+            if not admin:
+                return {'error': 'Admin not found or has been deleted'}, 404
+
+            if not admin.is_active:
+                return {'error': 'Admin account is inactive'}, 403
+
+            # Find user
+            user = User.query.get(user_id)
+
+            if not user:
+                return {'error': 'User not found'}, 404
+
+            # Update status to active
+            old_status = user.status
+            user.status = 'active'
+
+            db.session.commit()
+
+            # Send verification email
+            try:
+                email_result = send_user_verification_email(
+                    user.email,
+                    user.full_name
+                )
+                if email_result and not email_result['success']:
+                    print(f"Warning: Failed to send email to {user.email}: {email_result['message']}")
+            except Exception as e:
+                print(f"Warning: Error sending email: {str(e)}")
+
+            return {
+                'message': f'User approved successfully. Status updated from {old_status} to active',
+                'user': {
+                    'id': user.id,
+                    'full_name': user.full_name,
+                    'email': user.email,
+                    'status': user.status
+                }
+            }, 200
+
+        except Exception as e:
+            db.session.rollback()
+            return {'error': f'Failed to approve user: {str(e)}'}, 500
+
+@admin_ns.route('/providers/<int:provider_id>/approve')
+class ProviderApprove(Resource):
+    @admin_ns.doc(security='Bearer')
+    @admin_ns.response(200, 'Provider approved successfully', success_model)
+    @admin_ns.response(401, 'Unauthorized', error_model)
+    @admin_ns.response(403, 'Forbidden - Admin access required', error_model)
+    @admin_ns.response(404, 'Provider not found', error_model)
+    @jwt_required()
+    def post(self, provider_id):
+        """Approve provider (set status to active and send verification email)"""
+        try:
+            from flask_jwt_extended import get_jwt
+            current_identity = get_jwt_identity()
+            claims = get_jwt()
+
+            # Check if user is an admin
+            if claims.get('user_type') != 'admin':
+                return {'error': 'Access denied. Admin authentication required.'}, 403
+
+            # Get current admin
+            admin_id = int(current_identity)
+            admin = Admin.query.filter_by(admin_id=admin_id, is_deleted=False).first()
+
+            if not admin:
+                return {'error': 'Admin not found or has been deleted'}, 404
+
+            if not admin.is_active:
+                return {'error': 'Admin account is inactive'}, 403
+
+            # Find provider
+            provider = Provider.query.get(provider_id)
+
+            if not provider:
+                return {'error': 'Provider not found'}, 404
+
+            # Update status to active
+            old_status = provider.status
+            provider.status = 'active'
+
+            db.session.commit()
+
+            # Send verification email
+            try:
+                email_result = send_provider_verification_email(
+                    provider.email,
+                    provider.full_name,
+                    provider.business_name
+                )
+                if email_result and not email_result['success']:
+                    print(f"Warning: Failed to send email to {provider.email}: {email_result['message']}")
+            except Exception as e:
+                print(f"Warning: Error sending email: {str(e)}")
+
+            return {
+                'message': f'Provider approved successfully. Status updated from {old_status} to active',
+                'provider': {
+                    'id': provider.id,
+                    'business_name': provider.business_name,
+                    'full_name': provider.full_name,
+                    'email': provider.email,
+                    'status': provider.status
+                }
+            }, 200
+
+        except Exception as e:
+            db.session.rollback()
+            return {'error': f'Failed to approve provider: {str(e)}'}, 500

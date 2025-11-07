@@ -233,3 +233,16 @@ class CustomerReport(db.Model):
     created_at = db.Column(db.TIMESTAMP, default=datetime.utcnow)
     updated_at = db.Column(db.TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow)
     resolved_at = db.Column(db.TIMESTAMP, nullable=True)
+
+class PasswordOtp(db.Model):
+    __tablename__ = 'password_otps'
+
+    otp_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    account_id = db.Column(db.Integer, nullable=False)
+    account_type = db.Column(db.Enum('user', 'provider', name='otp_account_type_enum'), nullable=False)
+    otp_code = db.Column(db.String(10), nullable=False)
+    purpose = db.Column(db.Enum('forgot_password', 'account_verification', 'two_factor', name='otp_purpose_enum'), nullable=False, default='forgot_password')
+    is_verified = db.Column(db.Boolean, nullable=False, default=False)
+    expires_at = db.Column(db.DateTime, nullable=False)
+    created_at = db.Column(db.TIMESTAMP, default=datetime.utcnow)
+    updated_at = db.Column(db.TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow)

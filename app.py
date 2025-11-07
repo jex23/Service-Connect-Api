@@ -10,7 +10,12 @@ import os
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app, origins="*")
+CORS(app,
+     origins="*",
+     methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+     allow_headers=["Content-Type", "Authorization"],
+     supports_credentials=True,
+     max_age=3600)
 
 # Configuration
 db_user = os.getenv('DB_USER', 'james23')

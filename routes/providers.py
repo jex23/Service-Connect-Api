@@ -2,6 +2,7 @@ from flask import request
 from flask_restx import Namespace, Resource, fields
 from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
 from utils.upload import upload_file_to_r2, delete_file_from_r2
+from utils.email import send_booking_status_update_email
 
 try:
     from models import (
@@ -380,13 +381,13 @@ image_logo=<file>
             return {'error': 'Database connection not available'}, 503
             
         try:
-            current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
-            
+            claims = get_jwt()
+            user_type = claims.get('user_type')
+
             if user_type != 'provider':
                 return {'error': 'Access denied - provider account required'}, 403
-                
-            provider_id = current_identity['user_id']
+
+            provider_id = int(claims.get('sub'))
             provider = Provider.query.get(provider_id)
             
             if not provider:
@@ -458,13 +459,13 @@ class ProviderDocumentUpload(Resource):
             return {'error': 'Database connection not available'}, 503
             
         try:
-            current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
-            
+            claims = get_jwt()
+            user_type = claims.get('user_type')
+
             if user_type != 'provider':
                 return {'error': 'Access denied - provider account required'}, 403
-                
-            provider_id = current_identity['user_id']
+
+            provider_id = int(claims.get('sub'))
             provider = Provider.query.get(provider_id)
             
             if not provider:
@@ -539,13 +540,13 @@ class ProviderServices(Resource):
             return {'error': 'Database connection not available'}, 503
             
         try:
-            current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
-            
+            claims = get_jwt()
+            user_type = claims.get('user_type')
+
             if user_type != 'provider':
                 return {'error': 'Access denied - provider account required'}, 403
-                
-            provider_id = current_identity['user_id']
+
+            provider_id = int(claims.get('sub'))
             
             # Get query parameters
             active_filter = request.args.get('active')
@@ -642,13 +643,13 @@ class ProviderServices(Resource):
             return {'error': 'Database connection not available'}, 503
             
         try:
-            current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
-            
+            claims = get_jwt()
+            user_type = claims.get('user_type')
+
             if user_type != 'provider':
                 return {'error': 'Access denied - provider account required'}, 403
-                
-            provider_id = current_identity['user_id']
+
+            provider_id = int(claims.get('sub'))
             data = request.get_json()
             
             # Validation
@@ -736,13 +737,13 @@ class ProviderServiceDetail(Resource):
             return {'error': 'Database connection not available'}, 503
             
         try:
-            current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
-            
+            claims = get_jwt()
+            user_type = claims.get('user_type')
+
             if user_type != 'provider':
                 return {'error': 'Access denied - provider account required'}, 403
-                
-            provider_id = current_identity['user_id']
+
+            provider_id = int(claims.get('sub'))
             
             service = db.session.query(ProviderService, ServiceCategory).join(
                 ServiceCategory, ProviderService.category_id == ServiceCategory.id
@@ -799,13 +800,13 @@ class ProviderServiceDetail(Resource):
             return {'error': 'Database connection not available'}, 503
             
         try:
-            current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
-            
+            claims = get_jwt()
+            user_type = claims.get('user_type')
+
             if user_type != 'provider':
                 return {'error': 'Access denied - provider account required'}, 403
-                
-            provider_id = current_identity['user_id']
+
+            provider_id = int(claims.get('sub'))
             
             service = ProviderService.query.filter_by(
                 id=service_id,
@@ -900,13 +901,13 @@ class ProviderServiceDetail(Resource):
             return {'error': 'Database connection not available'}, 503
             
         try:
-            current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
-            
+            claims = get_jwt()
+            user_type = claims.get('user_type')
+
             if user_type != 'provider':
                 return {'error': 'Access denied - provider account required'}, 403
-                
-            provider_id = current_identity['user_id']
+
+            provider_id = int(claims.get('sub'))
             
             service = ProviderService.query.filter_by(
                 id=service_id,
@@ -952,13 +953,13 @@ class ProviderServicePhotos(Resource):
             return {'error': 'Database connection not available'}, 503
             
         try:
-            current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
-            
+            claims = get_jwt()
+            user_type = claims.get('user_type')
+
             if user_type != 'provider':
                 return {'error': 'Access denied - provider account required'}, 403
-                
-            provider_id = current_identity['user_id']
+
+            provider_id = int(claims.get('sub'))
             
             # Check if service exists and belongs to provider
             service = ProviderService.query.filter_by(
@@ -1007,15 +1008,15 @@ class ProviderServicePhotoDetail(Resource):
         """Update photo sort order"""
         if not DB_AVAILABLE:
             return {'error': 'Database connection not available'}, 503
-            
+
         try:
-            current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
-            
+            claims = get_jwt()
+            user_type = claims.get('user_type')
+
             if user_type != 'provider':
                 return {'error': 'Access denied - provider account required'}, 403
-                
-            provider_id = current_identity['user_id']
+
+            provider_id = int(claims.get('sub'))
             
             # Check photo ownership
             photo = db.session.query(ProviderServicePhoto).join(
@@ -1066,15 +1067,15 @@ class ProviderServicePhotoDetail(Resource):
         """Delete a specific photo"""
         if not DB_AVAILABLE:
             return {'error': 'Database connection not available'}, 503
-            
+
         try:
-            current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
-            
+            claims = get_jwt()
+            user_type = claims.get('user_type')
+
             if user_type != 'provider':
                 return {'error': 'Access denied - provider account required'}, 403
-                
-            provider_id = current_identity['user_id']
+
+            provider_id = int(claims.get('sub'))
             
             # Check photo ownership
             photo = db.session.query(ProviderServicePhoto).join(
@@ -1120,13 +1121,13 @@ class ProviderCategories(Resource):
             return {'error': 'Database connection not available'}, 503
             
         try:
-            current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
-            
+            claims = get_jwt()
+            user_type = claims.get('user_type')
+
             if user_type != 'provider':
                 return {'error': 'Access denied - provider account required'}, 403
-                
-            provider_id = current_identity['user_id']
+
+            provider_id = int(claims.get('sub'))
             
             # Get all categories
             categories = ServiceCategory.query.all()
@@ -1176,13 +1177,13 @@ class ProviderCategories(Resource):
             return {'error': 'Database connection not available'}, 503
             
         try:
-            current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
-            
+            claims = get_jwt()
+            user_type = claims.get('user_type')
+
             if user_type != 'provider':
                 return {'error': 'Access denied - provider account required'}, 403
-                
-            provider_id = current_identity['user_id']
+
+            provider_id = int(claims.get('sub'))
             data = request.get_json()
             
             if 'category_ids' not in data or not isinstance(data['category_ids'], list):
@@ -1241,13 +1242,13 @@ class ProviderCategoryDetail(Resource):
             return {'error': 'Database connection not available'}, 503
             
         try:
-            current_identity = get_jwt_identity()
-            user_type = current_identity.get('user_type')
-            
+            claims = get_jwt()
+            user_type = claims.get('user_type')
+
             if user_type != 'provider':
                 return {'error': 'Access denied - provider account required'}, 403
-                
-            provider_id = current_identity['user_id']
+
+            provider_id = int(claims.get('sub'))
             
             # Find registration
             membership = ProviderCategoryMembership.query.filter_by(
@@ -3035,7 +3036,14 @@ class ProviderBookingDetail(Resource):
                 except ValueError:
                     return {'error': 'Invalid time format'}, 400
 
+            # Track status change for email notification
+            old_status = booking.status
+            status_changed = False
+
             if 'status' in data:
+                if booking.status != data['status']:
+                    status_changed = True
+                    old_status = booking.status
                 booking.status = data['status']
 
             db.session.commit()
@@ -3043,6 +3051,26 @@ class ProviderBookingDetail(Resource):
             # Get user and service details for response
             user = User.query.filter_by(id=booking.user_id).first()
             service = ProviderService.query.filter_by(id=booking.provider_service_id).first()
+            provider = Provider.query.filter_by(id=booking.provider_id).first()
+
+            # Send email notification if status changed
+            if status_changed:
+                try:
+                    provider_display_name = provider.business_name if provider.business_name else provider.full_name
+                    send_booking_status_update_email(
+                        user_email=user.email,
+                        user_name=user.full_name,
+                        provider_name=provider_display_name,
+                        service_title=service.service_title,
+                        booking_date=booking.booking_date.strftime('%Y-%m-%d'),
+                        booking_time=booking.booking_time.strftime('%H:%M'),
+                        old_status=old_status,
+                        new_status=booking.status,
+                        booking_id=booking.id
+                    )
+                except Exception as email_error:
+                    # Log the error but don't fail the request
+                    print(f"Failed to send booking update email: {str(email_error)}")
 
             booking_response = {
                 'id': booking.id,

@@ -4,10 +4,12 @@ from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identi
 from sqlalchemy.exc import OperationalError
 from werkzeug.datastructures import FileStorage
 from utils.upload import upload_file_to_r2, upload_multiple_files_to_r2
+from utils.email import generate_otp, send_password_reset_otp_email
+from datetime import datetime, timedelta
 import re
 
 try:
-    from models import db, User, Provider, ServiceCategory, ProviderCategoryMembership, ProviderService, ProviderServicePhoto, UserServiceCategory, ProviderServiceSchedule
+    from models import db, User, Provider, ServiceCategory, ProviderCategoryMembership, ProviderService, ProviderServicePhoto, UserServiceCategory, ProviderServiceSchedule, PasswordOtp
     DB_AVAILABLE = True
 except Exception as e:
     print(f"Database models not available: {e}")
@@ -277,7 +279,6 @@ class UserRegister(Resource):
             db.session.commit()
 
             # Create access token
-            access_token = create_access_token(identity={'user_id': user.id, 'user_type': 'user'})
             access_token = create_access_token(identity=str(user.id), additional_claims={'user_type': 'user'})
 
             return {
@@ -1668,4 +1669,242 @@ class ProviderServiceScheduleCreate(Resource):
         except Exception as e:
             db.session.rollback()
             return {'error': str(e)}, 500
-        
+
+# Password Reset API Models
+forgot_password_request_model = auth_ns.model('ForgotPasswordRequest', {
+    'email': fields.String(required=True, description='Email address'),
+    'account_type': fields.String(required=True, description='Account type', enum=['user', 'provider'])
+})
+
+forgot_password_response_model = auth_ns.model('ForgotPasswordResponse', {
+    'message': fields.String(description='Success message'),
+    'email': fields.String(description='Email where OTP was sent')
+})
+
+reset_password_model = auth_ns.model('ResetPassword', {
+    'email': fields.String(required=True, description='Email address'),
+    'account_type': fields.String(required=True, description='Account type', enum=['user', 'provider']),
+    'otp_code': fields.String(required=True, description='OTP code received via email'),
+    'new_password': fields.String(required=True, description='New password (minimum 6 characters)')
+})
+
+reset_password_response_model = auth_ns.model('ResetPasswordResponse', {
+    'message': fields.String(description='Success message')
+})
+
+@auth_ns.route('/forgot-password')
+class ForgotPassword(Resource):
+    @auth_ns.expect(forgot_password_request_model)
+    @auth_ns.marshal_with(forgot_password_response_model, code=200)
+    @auth_ns.response(400, 'Validation Error', error_model)
+    @auth_ns.response(404, 'Account Not Found', error_model)
+    @auth_ns.response(500, 'Internal Server Error', error_model)
+    @auth_ns.doc(description='''Request a password reset OTP.
+
+**Required Fields:**
+- email: Email address associated with the account
+- account_type: Type of account ('user' or 'provider')
+
+**Sample Payload:**
+```json
+{
+  "email": "user@example.com",
+  "account_type": "user"
+}
+```
+
+**Response:**
+- OTP will be sent to the provided email address
+- OTP is valid for 15 minutes
+- Previous unused OTPs for the same account will be invalidated
+
+**Security Features:**
+- Rate limiting recommended (implement in production)
+- OTPs expire after 15 minutes
+- Only one active OTP per account at a time
+- Case-insensitive email lookup''')
+    def post(self):
+        """Request password reset OTP"""
+        if not DB_AVAILABLE:
+            return {'error': 'Database connection not available'}, 503
+
+        try:
+            data = request.get_json()
+
+            # Validation
+            if not all(k in data for k in ['email', 'account_type']):
+                return {'error': 'Missing required fields: email and account_type'}, 400
+
+            email = data['email'].lower().strip()
+            account_type = data['account_type'].lower()
+
+            if not validate_email(email):
+                return {'error': 'Invalid email format'}, 400
+
+            if account_type not in ['user', 'provider']:
+                return {'error': 'Invalid account_type. Must be "user" or "provider"'}, 400
+
+            # Find account
+            account = None
+            if account_type == 'user':
+                account = User.query.filter_by(email=email).first()
+            else:
+                account = Provider.query.filter_by(email=email).first()
+
+            if not account:
+                return {'error': 'No account found with this email address'}, 404
+
+            # Invalidate any existing unused OTPs for this account
+            PasswordOtp.query.filter_by(
+                account_id=account.id,
+                account_type=account_type,
+                purpose='forgot_password',
+                is_verified=False
+            ).delete()
+
+            # Generate new OTP
+            otp_code = generate_otp(6)
+            expires_at = datetime.utcnow() + timedelta(minutes=15)
+
+            # Create OTP record
+            password_otp = PasswordOtp(
+                account_id=account.id,
+                account_type=account_type,
+                otp_code=otp_code,
+                purpose='forgot_password',
+                is_verified=False,
+                expires_at=expires_at
+            )
+
+            db.session.add(password_otp)
+            db.session.commit()
+
+            # Send OTP email
+            email_result = send_password_reset_otp_email(
+                email=email,
+                name=account.full_name,
+                otp_code=otp_code,
+                account_type=account_type
+            )
+
+            if not email_result['success']:
+                # Rollback OTP creation if email fails
+                db.session.delete(password_otp)
+                db.session.commit()
+                return {'error': f'Failed to send OTP email: {email_result["message"]}'}, 500
+
+            return {
+                'message': 'Password reset OTP has been sent to your email',
+                'email': email
+            }, 200
+
+        except Exception as e:
+            db.session.rollback()
+            return {'error': str(e)}, 500
+
+@auth_ns.route('/reset-password')
+class ResetPassword(Resource):
+    @auth_ns.expect(reset_password_model)
+    @auth_ns.marshal_with(reset_password_response_model, code=200)
+    @auth_ns.response(400, 'Validation Error', error_model)
+    @auth_ns.response(401, 'Invalid or Expired OTP', error_model)
+    @auth_ns.response(404, 'Account Not Found', error_model)
+    @auth_ns.response(500, 'Internal Server Error', error_model)
+    @auth_ns.doc(description='''Reset password using OTP.
+
+**Required Fields:**
+- email: Email address associated with the account
+- account_type: Type of account ('user' or 'provider')
+- otp_code: OTP code received via email
+- new_password: New password (minimum 6 characters)
+
+**Sample Payload:**
+```json
+{
+  "email": "user@example.com",
+  "account_type": "user",
+  "otp_code": "123456",
+  "new_password": "NewSecurePassword123!"
+}
+```
+
+**Response:**
+- Password will be updated successfully
+- OTP will be marked as verified
+- User can login with new password immediately
+
+**Security Features:**
+- OTP must be valid and not expired
+- OTP can only be used once
+- Password must meet minimum requirements (6 characters)
+- OTP is marked as verified after successful use''')
+    def post(self):
+        """Reset password using OTP"""
+        if not DB_AVAILABLE:
+            return {'error': 'Database connection not available'}, 503
+
+        try:
+            data = request.get_json()
+
+            # Validation
+            required_fields = ['email', 'account_type', 'otp_code', 'new_password']
+            if not all(k in data for k in required_fields):
+                return {'error': f'Missing required fields: {", ".join(required_fields)}'}, 400
+
+            email = data['email'].lower().strip()
+            account_type = data['account_type'].lower()
+            otp_code = data['otp_code'].strip()
+            new_password = data['new_password']
+
+            # Validate inputs
+            if not validate_email(email):
+                return {'error': 'Invalid email format'}, 400
+
+            if account_type not in ['user', 'provider']:
+                return {'error': 'Invalid account_type. Must be "user" or "provider"'}, 400
+
+            if len(new_password) < 6:
+                return {'error': 'Password must be at least 6 characters'}, 400
+
+            # Find account
+            account = None
+            if account_type == 'user':
+                account = User.query.filter_by(email=email).first()
+            else:
+                account = Provider.query.filter_by(email=email).first()
+
+            if not account:
+                return {'error': 'No account found with this email address'}, 404
+
+            # Find valid OTP
+            password_otp = PasswordOtp.query.filter_by(
+                account_id=account.id,
+                account_type=account_type,
+                otp_code=otp_code,
+                purpose='forgot_password',
+                is_verified=False
+            ).first()
+
+            if not password_otp:
+                return {'error': 'Invalid OTP code'}, 401
+
+            # Check if OTP is expired
+            if datetime.utcnow() > password_otp.expires_at:
+                return {'error': 'OTP has expired. Please request a new one'}, 401
+
+            # Update password
+            account.set_password(new_password)
+
+            # Mark OTP as verified
+            password_otp.is_verified = True
+
+            db.session.commit()
+
+            return {
+                'message': 'Password reset successful. You can now login with your new password'
+            }, 200
+
+        except Exception as e:
+            db.session.rollback()
+            return {'error': str(e)}, 500
+
