@@ -5,7 +5,7 @@ from models import db, Admin, Provider, User, ProviderService, ServiceCategory, 
 from datetime import datetime
 from functools import wraps
 from sqlalchemy import func
-from utils.email import send_provider_verification_email, send_user_verification_email, send_account_status_change_email
+from utils.email import send_provider_verification_email, send_user_verification_email, send_account_status_change_email, send_account_rejection_email
 
 # Create namespace
 admin_ns = Namespace('admin', description='Admin operations')
@@ -783,6 +783,14 @@ class ProviderStatus(Resource):
                         provider.full_name,
                         provider.business_name
                     )
+                # Special rejection email when denying from verification
+                elif new_status == 'inactive' and old_status == 'for_verification':
+                    email_result = send_account_rejection_email(
+                        provider.email,
+                        provider.full_name,
+                        account_type='provider',
+                        business_name=provider.business_name
+                    )
                 # Generic status change email for other transitions
                 elif new_status in ['active', 'inactive', 'suspended'] and old_status != 'for_verification':
                     email_result = send_account_status_change_email(
@@ -930,6 +938,13 @@ class UserStatus(Resource):
                     email_result = send_user_verification_email(
                         user.email,
                         user.full_name
+                    )
+                # Special rejection email when denying from verification
+                elif new_status == 'inactive' and old_status == 'for_verification':
+                    email_result = send_account_rejection_email(
+                        user.email,
+                        user.full_name,
+                        account_type='user'
                     )
                 # Generic status change email for other transitions
                 elif new_status in ['active', 'inactive', 'suspended'] and old_status != 'for_verification':

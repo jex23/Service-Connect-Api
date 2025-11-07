@@ -592,6 +592,180 @@ def send_account_status_change_email(email, name, new_status, account_type='user
     return send_email(email, subject, html_content, text_content)
 
 
+def send_account_rejection_email(email, name, account_type='user', business_name=None, reason=None):
+    """
+    Send account rejection/denial notification email
+
+    Args:
+        email (str): Account email address
+        name (str): Account holder's full name
+        account_type (str): 'user' or 'provider'
+        business_name (str, optional): Business name for providers
+        reason (str, optional): Reason for rejection
+
+    Returns:
+        dict: {'success': bool, 'message': str}
+    """
+    is_provider = account_type == 'provider'
+    business_display = business_name if business_name else name
+
+    subject = "Service Connect Account Application - Update"
+    header_color = "#f44336"  # Red
+    icon = "❌"
+    title = "Account Application Denied"
+
+    if is_provider:
+        message = f"We regret to inform you that your service provider application for <strong>{business_display}</strong> has not been approved at this time."
+        details = """
+        <p><strong>What this means:</strong></p>
+        <ul>
+            <li>Your provider account application was not approved</li>
+            <li>You will not be able to offer services on our platform</li>
+            <li>Your account has been set to inactive status</li>
+        </ul>
+        """
+    else:
+        message = "We regret to inform you that your user account application has not been approved at this time."
+        details = """
+        <p><strong>What this means:</strong></p>
+        <ul>
+            <li>Your user account application was not approved</li>
+            <li>You will not be able to access the platform</li>
+            <li>Your account has been set to inactive status</li>
+        </ul>
+        """
+
+    # Add reason if provided
+    reason_section = ""
+    if reason:
+        reason_section = f"""
+        <div class="highlight">
+            <p><strong>Reason:</strong></p>
+            <p>{reason}</p>
+        </div>
+        """
+
+    action = """
+    <p><strong>What you can do:</strong></p>
+    <ul>
+        <li>Review your application details and ensure all information was accurate</li>
+        <li>Check that all required documents were properly submitted</li>
+        <li>You may reapply by creating a new account with complete and accurate information</li>
+        <li>Contact our support team if you believe this decision was made in error</li>
+    </ul>
+
+    <p>If you have questions or would like more information about this decision, please contact our support team at
+    <a href="mailto:serviceconnectassistdesk@gmail.com">serviceconnectassistdesk@gmail.com</a>.</p>
+    """
+
+    # HTML email template
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <style>
+            body {{
+                font-family: Arial, sans-serif;
+                line-height: 1.6;
+                color: #333;
+                max-width: 600px;
+                margin: 0 auto;
+                padding: 20px;
+            }}
+            .header {{
+                background-color: {header_color};
+                color: white;
+                padding: 30px 20px;
+                text-align: center;
+                border-radius: 5px 5px 0 0;
+            }}
+            .content {{
+                background-color: #f9f9f9;
+                padding: 30px 20px;
+                border-left: 1px solid #ddd;
+                border-right: 1px solid #ddd;
+            }}
+            .footer {{
+                background-color: #333;
+                color: white;
+                padding: 20px;
+                text-align: center;
+                font-size: 12px;
+                border-radius: 0 0 5px 5px;
+            }}
+            .highlight {{
+                background-color: #fff;
+                padding: 15px;
+                border-left: 4px solid {header_color};
+                margin: 20px 0;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <h1>{icon} {title}</h1>
+        </div>
+        <div class="content">
+            <p>Dear {name},</p>
+
+            <p>{message}</p>
+
+            <div class="highlight">
+                {details}
+            </div>
+
+            {reason_section}
+
+            {action}
+
+            <p>Thank you for your interest in Service Connect.</p>
+
+            <p>Best regards,<br>
+            <strong>The Service Connect Team</strong></p>
+        </div>
+        <div class="footer">
+            <p>&copy; {datetime.now().year} Service Connect. All rights reserved.</p>
+            <p>This is an automated message, please do not reply to this email.</p>
+        </div>
+    </body>
+    </html>
+    """
+
+    # Plain text version
+    text_content = f"""
+    Dear {name},
+
+    {title}
+
+    {message.replace('<strong>', '').replace('</strong>', '')}
+
+    What this means:
+    - Your account application was not approved
+    - Your account has been set to inactive status
+    - You will not be able to access the platform
+
+    {f'Reason: {reason}' if reason else ''}
+
+    What you can do:
+    - Review your application details and ensure all information was accurate
+    - Check that all required documents were properly submitted
+    - You may reapply by creating a new account with complete and accurate information
+    - Contact our support team if you believe this decision was made in error
+
+    If you have questions, please contact our support team at serviceconnectassistdesk@gmail.com.
+
+    Thank you for your interest in Service Connect.
+
+    Best regards,
+    The Service Connect Team
+
+    © {datetime.now().year} Service Connect. All rights reserved.
+    This is an automated message, please do not reply to this email.
+    """
+
+    return send_email(email, subject, html_content, text_content)
+
+
 def generate_otp(length=6):
     """
     Generate a random OTP code
