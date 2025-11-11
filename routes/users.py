@@ -1113,7 +1113,7 @@ class ServiceBookingCreate(Resource):
             return {'error': 'Database connection not available'}, 503
             
         try:
-            from datetime import datetime
+            from datetime import datetime, timedelta
             data = request.get_json()
             
             print(f"Service booking request data: {data}")
@@ -1197,17 +1197,34 @@ class ServiceBookingCreate(Resource):
                     'error': f'Booking time must be between {provider_schedule.start_time.strftime("%H:%M")} and {provider_schedule.end_time.strftime("%H:%M")} on {data["booking_day"]}'
                 }, 400
             
-            # Check for existing booking (prevent duplicates)
-            existing_booking = ServiceBooking.query.filter_by(
-                user_id=data['user_id'],
-                provider_service_id=data['provider_service_id'],
+            # Check for existing booking conflicts (prevent double-booking across ALL provider services)
+            # Calculate booking end time based on service duration
+            service_duration = provider_service.duration_minutes or 60  # Default 60 minutes
+            booking_time_dt = datetime.combine(datetime.today(), booking_time)
+            booking_end_dt = booking_time_dt + timedelta(minutes=service_duration)
+
+            # Get all non-cancelled bookings for this provider on this date (across ALL services)
+            existing_bookings = ServiceBooking.query.filter_by(
+                provider_id=provider_service.provider_id,
                 booking_date=booking_date,
-                booking_day=data['booking_day'],
-                booking_time=booking_time
-            ).first()
-            
-            if existing_booking:
-                return {'error': 'You already have a booking for this service at this time'}, 409
+                booking_day=data['booking_day']
+            ).filter(ServiceBooking.status != 'Cancelled').all()
+
+            # Check for time overlap with any existing booking
+            for existing in existing_bookings:
+                # Get the duration of the existing booking's service
+                existing_service = ProviderService.query.get(existing.provider_service_id)
+                existing_duration = existing_service.duration_minutes if existing_service else 60
+
+                # Calculate existing booking time range
+                existing_time_dt = datetime.combine(datetime.today(), existing.booking_time)
+                existing_end_dt = existing_time_dt + timedelta(minutes=existing_duration)
+
+                # Check if time slots overlap: (start1 < end2) and (end1 > start2)
+                if (booking_time_dt < existing_end_dt) and (booking_end_dt > existing_time_dt):
+                    return {
+                        'error': f'Provider is already booked from {existing.booking_time.strftime("%H:%M")} to {existing_end_dt.strftime("%H:%M")} for "{existing_service.service_title}". Please choose a different time slot.'
+                    }, 409
             
             # Create new booking
             booking = ServiceBooking(
