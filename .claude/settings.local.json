@@ -8,7 +8,9 @@
       "Bash(python:*)",
       "Bash(cat:*)",
       "Bash(email_backup.py)",
-      "Bash(email.py)"
+      "Bash(email.py)",
+      "Bash(env/Scripts/python.exe:*)",
+      "Bash(env/Scripts/pip.exe install:*)"
     ],
     "deny": []
   }

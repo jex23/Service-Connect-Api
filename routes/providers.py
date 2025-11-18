@@ -7,7 +7,7 @@ from utils.email import send_booking_status_update_email
 try:
     from models import (
         db, Provider, ProviderService, ProviderServicePhoto,
-        ServiceCategory, ProviderCategoryMembership, ProviderServiceSchedule, ServiceBooking, User, PaymentStatus
+        ServiceCategory, ProviderCategoryMembership, ProviderServiceSchedule, ServiceBooking, User, PaymentStatus, ProviderFeedback
     )
     DB_AVAILABLE = True
 except Exception as e:
@@ -155,6 +155,29 @@ service_booking_update_model = providers_ns.model('ServiceBookingUpdate', {
     'booking_day': fields.String(enum=['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'], description='Day of the week'),
     'booking_time': fields.String(description='Booking time (HH:MM format)'),
     'status': fields.String(enum=['Pending', 'Confirmed', 'Completed', 'Cancelled'], description='Booking status')
+})
+
+# PROVIDER FEEDBACK MODELS
+provider_feedback_model = providers_ns.model('ProviderFeedback', {
+    'id': fields.Integer(description='Feedback ID'),
+    'user_id': fields.Integer(description='User ID'),
+    'user_name': fields.String(description='User full name'),
+    'provider_id': fields.Integer(description='Provider ID'),
+    'provider_service_id': fields.Integer(description='Service ID'),
+    'service_title': fields.String(description='Service title'),
+    'booking_id': fields.Integer(description='Booking ID'),
+    'rating': fields.Integer(description='Rating (1-5)'),
+    'comment': fields.String(description='Feedback comment'),
+    'created_at': fields.String(description='Creation timestamp'),
+    'updated_at': fields.String(description='Last update timestamp')
+})
+
+provider_feedbacks_response_model = providers_ns.model('ProviderFeedbacksResponse', {
+    'feedbacks': fields.List(fields.Nested(provider_feedback_model), description='List of feedbacks'),
+    'total': fields.Integer(description='Total number of feedbacks'),
+    'average_rating': fields.Float(description='Average rating'),
+    'rating_distribution': fields.Raw(description='Distribution of ratings (1-5)'),
+    'provider_info': fields.Raw(description='Provider information (public endpoint only)')
 })
 
 # PROVIDER PROFILE MANAGEMENT
@@ -3092,4 +3115,142 @@ class ProviderBookingDetail(Resource):
 
         except Exception as e:
             db.session.rollback()
+            return {'error': str(e)}, 500
+
+# PROVIDER FEEDBACK ENDPOINTS
+@providers_ns.route('/feedback/me')
+class ProviderFeedbackMe(Resource):
+    @providers_ns.doc(security='Bearer')
+    @providers_ns.marshal_with(provider_feedbacks_response_model, code=200)
+    @providers_ns.response(401, 'Unauthorized', error_model)
+    @providers_ns.response(403, 'Access denied - provider account required', error_model)
+    @jwt_required()
+    def get(self):
+        """Get all feedbacks for the authenticated provider"""
+        if not DB_AVAILABLE:
+            return {'error': 'Database not available'}, 503
+
+        try:
+            # Check if provider type
+            claims = get_jwt()
+            user_type = claims.get('user_type')
+
+            if user_type != 'provider':
+                return {'error': 'Access denied. Only providers can access this endpoint.'}, 403
+
+            identity = get_jwt_identity()
+            provider_id = int(identity)
+
+            # Get all feedbacks for this provider
+            feedbacks = ProviderFeedback.query.filter_by(provider_id=provider_id).order_by(ProviderFeedback.created_at.desc()).all()
+
+            feedbacks_list = []
+            total_rating = 0
+            rating_counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
+
+            for feedback in feedbacks:
+                # Get user details
+                user = User.query.get(feedback.user_id)
+
+                # Get service details
+                service = ProviderService.query.get(feedback.provider_service_id)
+
+                feedbacks_list.append({
+                    'id': feedback.id,
+                    'user_id': feedback.user_id,
+                    'user_name': user.full_name if user else 'Unknown User',
+                    'provider_id': feedback.provider_id,
+                    'provider_service_id': feedback.provider_service_id,
+                    'service_title': service.service_title if service else 'Unknown Service',
+                    'booking_id': feedback.booking_id,
+                    'rating': feedback.rating,
+                    'comment': feedback.comment,
+                    'created_at': feedback.created_at.isoformat() if feedback.created_at else None,
+                    'updated_at': feedback.updated_at.isoformat() if feedback.updated_at else None
+                })
+
+                total_rating += feedback.rating
+                rating_counts[feedback.rating] += 1
+
+            average_rating = round(total_rating / len(feedbacks), 2) if feedbacks else 0
+
+            return {
+                'feedbacks': feedbacks_list,
+                'total': len(feedbacks),
+                'average_rating': average_rating,
+                'rating_distribution': rating_counts,
+                'provider_info': None
+            }, 200
+
+        except Exception as e:
+            return {'error': str(e)}, 500
+
+@providers_ns.route('/<int:provider_id>/feedback')
+class ProviderFeedbackPublic(Resource):
+    @providers_ns.marshal_with(provider_feedbacks_response_model, code=200)
+    @providers_ns.response(404, 'Provider not found', error_model)
+    def get(self, provider_id):
+        """Get all feedbacks for a specific provider (Public - no authentication required)"""
+        if not DB_AVAILABLE:
+            return {'error': 'Database not available'}, 503
+
+        try:
+            # Check if provider exists
+            provider = Provider.query.get(provider_id)
+
+            if not provider:
+                return {'error': 'Provider not found'}, 404
+
+            # Get all feedbacks for this provider
+            feedbacks = ProviderFeedback.query.filter_by(provider_id=provider_id).order_by(ProviderFeedback.created_at.desc()).all()
+
+            feedbacks_list = []
+            total_rating = 0
+            rating_counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
+
+            for feedback in feedbacks:
+                # Get user details
+                user = User.query.get(feedback.user_id)
+
+                # Get service details
+                service = ProviderService.query.get(feedback.provider_service_id)
+
+                feedbacks_list.append({
+                    'id': feedback.id,
+                    'user_id': feedback.user_id,
+                    'user_name': user.full_name if user else 'Unknown User',
+                    'provider_id': feedback.provider_id,
+                    'provider_service_id': feedback.provider_service_id,
+                    'service_title': service.service_title if service else 'Unknown Service',
+                    'booking_id': feedback.booking_id,
+                    'rating': feedback.rating,
+                    'comment': feedback.comment,
+                    'created_at': feedback.created_at.isoformat() if feedback.created_at else None,
+                    'updated_at': feedback.updated_at.isoformat() if feedback.updated_at else None
+                })
+
+                total_rating += feedback.rating
+                rating_counts[feedback.rating] += 1
+
+            average_rating = round(total_rating / len(feedbacks), 2) if feedbacks else 0
+
+            # Include provider info in public endpoint
+            provider_info = {
+                'id': provider.id,
+                'business_name': provider.business_name,
+                'full_name': provider.full_name,
+                'address': provider.address,
+                'image_logo': provider.image_logo,
+                'about': provider.about
+            }
+
+            return {
+                'feedbacks': feedbacks_list,
+                'total': len(feedbacks),
+                'average_rating': average_rating,
+                'rating_distribution': rating_counts,
+                'provider_info': provider_info
+            }, 200
+
+        except Exception as e:
             return {'error': str(e)}, 500

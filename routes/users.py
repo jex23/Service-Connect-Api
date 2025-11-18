@@ -7,7 +7,7 @@ from utils.upload import upload_file_to_r2, delete_file_from_r2
 import re
 
 try:
-    from models import db, User, UserServiceCategory, ServiceCategory, Provider, ProviderService, ProviderServiceSchedule, ServiceBooking, PaymentStatus, CustomerReport
+    from models import db, User, UserServiceCategory, ServiceCategory, Provider, ProviderService, ProviderServiceSchedule, ServiceBooking, PaymentStatus, CustomerReport, ProviderFeedback
     DB_AVAILABLE = True
 except Exception as e:
     print(f"Database models not available: {e}")
@@ -134,6 +134,35 @@ user_reports_response_model = users_ns.model('UserReportsResponse', {
 create_report_response_model = users_ns.model('CreateReportResponse', {
     'message': fields.String(description='Success message'),
     'report': fields.Nested(user_report_model, description='Created report details')
+})
+
+# Provider Feedback Models
+create_feedback_model = users_ns.model('CreateFeedback', {
+    'provider_id': fields.Integer(required=True, description='Provider ID to give feedback'),
+    'provider_service_id': fields.Integer(required=True, description='Service ID that was used'),
+    'booking_id': fields.Integer(required=True, description='Booking ID for the completed service'),
+    'rating': fields.Integer(required=True, description='Rating from 1 to 5 stars'),
+    'comment': fields.String(description='Optional feedback comment')
+})
+
+feedback_model = users_ns.model('Feedback', {
+    'id': fields.Integer(description='Feedback ID'),
+    'user_id': fields.Integer(description='User ID'),
+    'provider_id': fields.Integer(description='Provider ID'),
+    'provider_service_id': fields.Integer(description='Service ID'),
+    'booking_id': fields.Integer(description='Booking ID'),
+    'rating': fields.Integer(description='Rating (1-5)'),
+    'comment': fields.String(description='Feedback comment'),
+    'created_at': fields.String(description='Creation timestamp'),
+    'updated_at': fields.String(description='Last update timestamp'),
+    'provider': fields.Raw(description='Provider information'),
+    'service': fields.Raw(description='Service information'),
+    'booking': fields.Raw(description='Booking information')
+})
+
+create_feedback_response_model = users_ns.model('CreateFeedbackResponse', {
+    'message': fields.String(description='Success message'),
+    'feedback': fields.Nested(feedback_model, description='Created feedback details')
 })
 
 def validate_email(email):
@@ -2296,6 +2325,297 @@ class ReportDetailsDropdown(Resource):
                 'providers': providers_list,
                 'services': services_list,
                 'bookings': bookings_list
+            }, 200
+
+        except Exception as e:
+            return {'error': str(e)}, 500
+
+@users_ns.route('/feedback')
+class UserFeedback(Resource):
+    @users_ns.doc(security='Bearer')
+    @users_ns.expect(create_feedback_model)
+    @users_ns.marshal_with(create_feedback_response_model, code=201)
+    @users_ns.response(400, 'Bad request - validation error', error_model)
+    @users_ns.response(401, 'Unauthorized', error_model)
+    @users_ns.response(403, 'Access denied - user account required or booking not completed', error_model)
+    @users_ns.response(404, 'Booking not found', error_model)
+    @users_ns.response(409, 'Feedback already exists for this booking', error_model)
+    @jwt_required()
+    def post(self):
+        """Create feedback for a provider service (Only for completed bookings)"""
+        if not DB_AVAILABLE:
+            return {'error': 'Database not available'}, 503
+
+        try:
+            # Check if user type
+            claims = get_jwt()
+            user_type = claims.get('user_type')
+
+            if user_type != 'user':
+                return {'error': 'Access denied. Only users can submit feedback.'}, 403
+
+            identity = get_jwt_identity()
+            user_id = int(identity)
+
+            data = request.json
+
+            # Validate required fields
+            if not all(k in data for k in ['provider_id', 'provider_service_id', 'booking_id', 'rating']):
+                return {'error': 'Missing required fields: provider_id, provider_service_id, booking_id, rating'}, 400
+
+            provider_id = data.get('provider_id')
+            provider_service_id = data.get('provider_service_id')
+            booking_id = data.get('booking_id')
+            rating = data.get('rating')
+            comment = data.get('comment', '')
+
+            # Validate rating is between 1-5
+            if not isinstance(rating, int) or rating < 1 or rating > 5:
+                return {'error': 'Rating must be an integer between 1 and 5'}, 400
+
+            # Check if booking exists and belongs to user
+            booking = ServiceBooking.query.filter_by(id=booking_id, user_id=user_id).first()
+
+            if not booking:
+                return {'error': 'Booking not found or does not belong to you'}, 404
+
+            # Check if booking status is Completed
+            if booking.status != 'Completed':
+                return {'error': 'You can only provide feedback for completed bookings'}, 403
+
+            # Verify booking matches provider and service
+            if booking.provider_id != provider_id or booking.provider_service_id != provider_service_id:
+                return {'error': 'Provider or service does not match the booking'}, 400
+
+            # Check if feedback already exists for this booking
+            existing_feedback = ProviderFeedback.query.filter_by(booking_id=booking_id).first()
+
+            if existing_feedback:
+                return {'error': 'Feedback already exists for this booking'}, 409
+
+            # Create new feedback
+            new_feedback = ProviderFeedback(
+                user_id=user_id,
+                provider_id=provider_id,
+                provider_service_id=provider_service_id,
+                booking_id=booking_id,
+                rating=rating,
+                comment=comment
+            )
+
+            db.session.add(new_feedback)
+            db.session.commit()
+
+            # Get provider details
+            provider = Provider.query.get(provider_id)
+            provider_info = {
+                'id': provider.id,
+                'business_name': provider.business_name,
+                'full_name': provider.full_name,
+                'email': provider.email
+            } if provider else None
+
+            # Get service details
+            service = ProviderService.query.get(provider_service_id)
+            service_info = {
+                'id': service.id,
+                'service_title': service.service_title,
+                'service_description': service.service_description,
+                'price_decimal': float(service.price_decimal) if service.price_decimal else None
+            } if service else None
+
+            # Get booking details
+            booking_info = {
+                'id': booking.id,
+                'booking_date': booking.booking_date.strftime('%Y-%m-%d') if booking.booking_date else None,
+                'booking_time': booking.booking_time.strftime('%H:%M') if booking.booking_time else None,
+                'status': booking.status
+            }
+
+            feedback_data = {
+                'id': new_feedback.id,
+                'user_id': new_feedback.user_id,
+                'provider_id': new_feedback.provider_id,
+                'provider_service_id': new_feedback.provider_service_id,
+                'booking_id': new_feedback.booking_id,
+                'rating': new_feedback.rating,
+                'comment': new_feedback.comment,
+                'created_at': new_feedback.created_at.isoformat() if new_feedback.created_at else None,
+                'updated_at': new_feedback.updated_at.isoformat() if new_feedback.updated_at else None,
+                'provider': provider_info,
+                'service': service_info,
+                'booking': booking_info
+            }
+
+            return {
+                'message': 'Feedback submitted successfully',
+                'feedback': feedback_data
+            }, 201
+
+        except Exception as e:
+            db.session.rollback()
+            return {'error': str(e)}, 500
+
+@users_ns.route('/feedback/completed-bookings/<int:provider_service_id>')
+class UserCompletedBookingsForFeedback(Resource):
+    @users_ns.doc(security='Bearer')
+    @users_ns.response(200, 'Success')
+    @users_ns.response(401, 'Unauthorized', error_model)
+    @users_ns.response(403, 'Access denied - user account required', error_model)
+    @users_ns.response(404, 'Service not found', error_model)
+    @jwt_required()
+    def get(self, provider_service_id):
+        """Check if user has completed booking for a specific service (to enable feedback button)"""
+        if not DB_AVAILABLE:
+            return {'error': 'Database not available'}, 503
+
+        try:
+            # Check if user type
+            claims = get_jwt()
+            user_type = claims.get('user_type')
+
+            if user_type != 'user':
+                return {'error': 'Access denied. Only users can access this endpoint.'}, 403
+
+            identity = get_jwt_identity()
+            user_id = int(identity)
+
+            # Check if service exists
+            service = ProviderService.query.get(provider_service_id)
+            if not service:
+                return {'error': 'Service not found'}, 404
+
+            # Get completed bookings for this user and specific service
+            completed_bookings = ServiceBooking.query.filter_by(
+                user_id=user_id,
+                provider_service_id=provider_service_id,
+                status='Completed'
+            ).order_by(ServiceBooking.booking_date.desc()).all()
+
+            bookings_list = []
+
+            for booking in completed_bookings:
+                # Check if feedback already exists for this booking
+                existing_feedback = ProviderFeedback.query.filter_by(booking_id=booking.id).first()
+
+                # Get provider details
+                provider = Provider.query.get(booking.provider_id)
+
+                bookings_list.append({
+                    'id': booking.id,
+                    'provider_id': booking.provider_id,
+                    'provider_name': provider.business_name if provider and provider.business_name else (provider.full_name if provider else 'Unknown Provider'),
+                    'provider_logo': provider.image_logo if provider else None,
+                    'provider_service_id': booking.provider_service_id,
+                    'service_title': service.service_title,
+                    'service_description': service.service_description,
+                    'price_decimal': float(service.price_decimal) if service.price_decimal else None,
+                    'booking_date': booking.booking_date.strftime('%Y-%m-%d') if booking.booking_date else None,
+                    'booking_time': booking.booking_time.strftime('%H:%M') if booking.booking_time else None,
+                    'status': booking.status,
+                    'has_feedback': existing_feedback is not None,
+                    'feedback_id': existing_feedback.id if existing_feedback else None,
+                    'completed_at': booking.updated_at.isoformat() if booking.updated_at else None
+                })
+
+            # Determine if user can give feedback
+            has_completed_booking = len(bookings_list) > 0
+            can_give_feedback = has_completed_booking and any(not b['has_feedback'] for b in bookings_list)
+
+            return {
+                'has_completed_booking': has_completed_booking,
+                'can_give_feedback': can_give_feedback,
+                'bookings': bookings_list,
+                'total': len(bookings_list),
+                'with_feedback': sum(1 for b in bookings_list if b['has_feedback']),
+                'without_feedback': sum(1 for b in bookings_list if not b['has_feedback'])
+            }, 200
+
+        except Exception as e:
+            return {'error': str(e)}, 500
+
+@users_ns.route('/feedback/service/<int:provider_service_id>')
+class UserServiceFeedbacks(Resource):
+    @users_ns.response(200, 'Success')
+    @users_ns.response(404, 'Service not found', error_model)
+    def get(self, provider_service_id):
+        """Get all feedbacks for a specific provider service (Public - no authentication required)"""
+        if not DB_AVAILABLE:
+            return {'error': 'Database not available'}, 503
+
+        try:
+            # Check if service exists
+            service = ProviderService.query.get(provider_service_id)
+
+            if not service:
+                return {'error': 'Service not found'}, 404
+
+            # Get provider details
+            provider = Provider.query.get(service.provider_id)
+
+            # Get service category
+            category = ServiceCategory.query.get(service.category_id)
+
+            # Get all feedbacks for this service
+            feedbacks = ProviderFeedback.query.filter_by(
+                provider_service_id=provider_service_id
+            ).order_by(ProviderFeedback.created_at.desc()).all()
+
+            feedbacks_list = []
+            total_rating = 0
+            rating_counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
+
+            for feedback in feedbacks:
+                # Get user details
+                user = User.query.get(feedback.user_id)
+
+                # Get booking details
+                booking = ServiceBooking.query.get(feedback.booking_id)
+
+                feedbacks_list.append({
+                    'id': feedback.id,
+                    'user_id': feedback.user_id,
+                    'user_name': user.full_name if user else 'Unknown User',
+                    'rating': feedback.rating,
+                    'comment': feedback.comment,
+                    'booking_date': booking.booking_date.strftime('%Y-%m-%d') if booking and booking.booking_date else None,
+                    'created_at': feedback.created_at.isoformat() if feedback.created_at else None,
+                    'updated_at': feedback.updated_at.isoformat() if feedback.updated_at else None
+                })
+
+                total_rating += feedback.rating
+                rating_counts[feedback.rating] += 1
+
+            average_rating = round(total_rating / len(feedbacks), 2) if feedbacks else 0
+
+            # Service information
+            service_info = {
+                'id': service.id,
+                'service_title': service.service_title,
+                'service_description': service.service_description,
+                'price_decimal': float(service.price_decimal) if service.price_decimal else None,
+                'duration_minutes': service.duration_minutes,
+                'category_name': category.category_name if category else None,
+                'is_active': service.is_active
+            }
+
+            # Provider information
+            provider_info = {
+                'id': provider.id,
+                'business_name': provider.business_name,
+                'full_name': provider.full_name,
+                'address': provider.address,
+                'image_logo': provider.image_logo,
+                'about': provider.about
+            } if provider else None
+
+            return {
+                'feedbacks': feedbacks_list,
+                'total': len(feedbacks),
+                'average_rating': average_rating,
+                'rating_distribution': rating_counts,
+                'service_info': service_info,
+                'provider_info': provider_info
             }, 200
 
         except Exception as e:

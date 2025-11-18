@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS provider_feedback (
+    id INT NOT NULL AUTO_INCREMENT,
+    user_id INT NOT NULL,
+    provider_id INT NOT NULL,
+    provider_service_id INT NOT NULL,
+    booking_id INT NOT NULL,
+    rating INT NOT NULL,
+    comment TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (provider_id) REFERENCES providers(id),
+    FOREIGN KEY (provider_service_id) REFERENCES provider_services(id),
+    FOREIGN KEY (booking_id) REFERENCES service_booking(id),
+    UNIQUE KEY unique_booking_feedback (booking_id),
+    INDEX idx_provider_id (provider_id),
+    INDEX idx_user_id (user_id),
+    INDEX idx_rating (rating)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

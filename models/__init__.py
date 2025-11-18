@@ -246,3 +246,16 @@ class PasswordOtp(db.Model):
     expires_at = db.Column(db.DateTime, nullable=False)
     created_at = db.Column(db.TIMESTAMP, default=datetime.utcnow)
     updated_at = db.Column(db.TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class ProviderFeedback(db.Model):
+    __tablename__ = 'provider_feedback'
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    provider_id = db.Column(db.Integer, db.ForeignKey('providers.id'), nullable=False)
+    provider_service_id = db.Column(db.Integer, db.ForeignKey('provider_services.id'), nullable=False)
+    booking_id = db.Column(db.Integer, db.ForeignKey('service_booking.id'), nullable=False)
+    rating = db.Column(db.Integer, nullable=False)  # 1-5 stars
+    comment = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.TIMESTAMP, default=datetime.utcnow)
+    updated_at = db.Column(db.TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow)
