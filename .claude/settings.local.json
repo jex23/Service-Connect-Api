@@ -10,7 +10,9 @@
       "Bash(email_backup.py)",
       "Bash(email.py)",
       "Bash(env/Scripts/python.exe:*)",
-      "Bash(env/Scripts/pip.exe install:*)"
+      "Bash(env/Scripts/pip.exe install:*)",
+      "Bash(.venvScriptspython.exe check_providers.py)",
+      "Bash(\"C:\\Users\\James\\Documents\\Service Connect\\Service-Connect-Api\\.venv\\Scripts\\python.exe\":*)"
     ],
     "deny": []
   }
