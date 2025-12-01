@@ -3254,3 +3254,90 @@ class ProviderFeedbackPublic(Resource):
 
         except Exception as e:
             return {'error': str(e)}, 500
+
+@providers_ns.route('/feedback/service/<int:provider_service_id>')
+class ProviderServiceFeedbacks(Resource):
+    @providers_ns.response(200, 'Success')
+    @providers_ns.response(404, 'Service not found', error_model)
+    def get(self, provider_service_id):
+        """Get all feedbacks for a specific provider service (Public - no authentication required)"""
+        if not DB_AVAILABLE:
+            return {'error': 'Database not available'}, 503
+
+        try:
+            # Check if service exists
+            service = ProviderService.query.get(provider_service_id)
+
+            if not service:
+                return {'error': 'Service not found'}, 404
+
+            # Get provider details
+            provider = Provider.query.get(service.provider_id)
+
+            # Get service category
+            category = ServiceCategory.query.get(service.category_id)
+
+            # Get all feedbacks for this service
+            feedbacks = ProviderFeedback.query.filter_by(
+                provider_service_id=provider_service_id
+            ).order_by(ProviderFeedback.created_at.desc()).all()
+
+            feedbacks_list = []
+            total_rating = 0
+            rating_counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
+
+            for feedback in feedbacks:
+                # Get user details
+                user = User.query.get(feedback.user_id)
+
+                # Get booking details
+                booking = ServiceBooking.query.get(feedback.booking_id)
+
+                feedbacks_list.append({
+                    'id': feedback.id,
+                    'user_id': feedback.user_id,
+                    'user_name': user.full_name if user else 'Unknown User',
+                    'rating': feedback.rating,
+                    'comment': feedback.comment,
+                    'booking_date': booking.booking_date.strftime('%Y-%m-%d') if booking and booking.booking_date else None,
+                    'created_at': feedback.created_at.isoformat() if feedback.created_at else None,
+                    'updated_at': feedback.updated_at.isoformat() if feedback.updated_at else None
+                })
+
+                total_rating += feedback.rating
+                rating_counts[feedback.rating] += 1
+
+            average_rating = round(total_rating / len(feedbacks), 2) if feedbacks else 0
+
+            # Service information
+            service_info = {
+                'id': service.id,
+                'service_title': service.service_title,
+                'service_description': service.service_description,
+                'price_decimal': float(service.price_decimal) if service.price_decimal else None,
+                'duration_minutes': service.duration_minutes,
+                'category_name': category.category_name if category else None,
+                'is_active': service.is_active
+            }
+
+            # Provider information
+            provider_info = {
+                'id': provider.id,
+                'business_name': provider.business_name,
+                'full_name': provider.full_name,
+                'address': provider.address,
+                'image_logo': provider.image_logo,
+                'about': provider.about
+            } if provider else None
+
+            return {
+                'feedbacks': feedbacks_list,
+                'total': len(feedbacks),
+                'average_rating': average_rating,
+                'rating_distribution': rating_counts,
+                'service_info': service_info,
+                'provider_info': provider_info
+            }, 200
+
+        except Exception as e:
+            return {'error': str(e)}, 500

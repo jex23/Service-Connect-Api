@@ -4,7 +4,7 @@ from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identi
 from sqlalchemy.exc import OperationalError
 from werkzeug.datastructures import FileStorage
 from utils.upload import upload_file_to_r2, upload_multiple_files_to_r2
-from utils.email import generate_otp, send_password_reset_otp_email
+from utils.email import generate_otp, send_password_reset_otp_email, send_registration_otp_email
 from datetime import datetime, timedelta
 import re
 
@@ -1692,6 +1692,43 @@ reset_password_response_model = auth_ns.model('ResetPasswordResponse', {
     'message': fields.String(description='Success message')
 })
 
+# Registration OTP API Models
+registration_otp_request_model = auth_ns.model('RegistrationOTPRequest', {
+    'full_name': fields.String(required=True, description='Full name'),
+    'email': fields.String(required=True, description='Email address'),
+    'account_type': fields.String(required=True, description='Account type', enum=['user', 'provider'])
+})
+
+registration_otp_response_model = auth_ns.model('RegistrationOTPResponse', {
+    'message': fields.String(description='Success message'),
+    'email': fields.String(description='Email where OTP was sent')
+})
+
+verify_registration_otp_user_model = auth_ns.model('VerifyRegistrationOTPUser', {
+    'full_name': fields.String(required=True, description='Full name'),
+    'email': fields.String(required=True, description='Email address'),
+    'otp_code': fields.String(required=True, description='OTP code received via email'),
+    'password': fields.String(required=True, description='Password (minimum 6 characters)'),
+    'address': fields.String(required=True, description='User address'),
+    'id_front': fields.String(description='Front ID document URL/path (optional)'),
+    'id_back': fields.String(description='Back ID document URL/path (optional)')
+})
+
+verify_registration_otp_provider_model = auth_ns.model('VerifyRegistrationOTPProvider', {
+    'full_name': fields.String(required=True, description='Full name'),
+    'email': fields.String(required=True, description='Email address'),
+    'otp_code': fields.String(required=True, description='OTP code received via email'),
+    'password': fields.String(required=True, description='Password (minimum 6 characters)'),
+    'address': fields.String(required=True, description='Provider address'),
+    'business_name': fields.String(description='Business name (optional)'),
+    'contact_number': fields.String(description='Contact phone number (optional)'),
+    'about': fields.String(description='About the provider (optional)'),
+    'bir_id_front': fields.String(description='BIR ID front document URL/path (optional)'),
+    'bir_id_back': fields.String(description='BIR ID back document URL/path (optional)'),
+    'business_permit': fields.String(description='Business permit document URL/path (optional)'),
+    'image_logo': fields.String(description='Business logo image URL/path (optional)')
+})
+
 @auth_ns.route('/forgot-password')
 class ForgotPassword(Resource):
     @auth_ns.expect(forgot_password_request_model)
@@ -1903,6 +1940,402 @@ class ResetPassword(Resource):
             return {
                 'message': 'Password reset successful. You can now login with your new password'
             }, 200
+
+        except Exception as e:
+            db.session.rollback()
+            return {'error': str(e)}, 500
+
+@auth_ns.route('/register/send-otp')
+class SendRegistrationOTP(Resource):
+    @auth_ns.expect(registration_otp_request_model)
+    @auth_ns.marshal_with(registration_otp_response_model, code=200)
+    @auth_ns.response(400, 'Validation Error', error_model)
+    @auth_ns.response(409, 'Email Already Registered', error_model)
+    @auth_ns.response(500, 'Internal Server Error', error_model)
+    @auth_ns.doc(description='''Send OTP for email verification during registration.
+
+**Required Fields:**
+- full_name: Full name of the user/provider
+- email: Valid email address (must not be already registered)
+- account_type: Type of account ('user' or 'provider')
+
+**Sample Payload:**
+```json
+{
+  "full_name": "John Doe",
+  "email": "john@example.com",
+  "account_type": "user"
+}
+```
+
+**Response:**
+- OTP will be sent to the provided email address
+- OTP is valid for 15 minutes
+- Previous unused OTPs for the same email will be invalidated
+
+**Security Features:**
+- Rate limiting recommended (implement in production)
+- OTPs expire after 15 minutes
+- Only one active OTP per email at a time
+- Email must not be already registered''')
+    def post(self):
+        """Send registration OTP to email"""
+        if not DB_AVAILABLE:
+            return {'error': 'Database connection not available'}, 503
+
+        try:
+            data = request.get_json()
+
+            # Validation
+            if not all(k in data for k in ['full_name', 'email', 'account_type']):
+                return {'error': 'Missing required fields: full_name, email, and account_type'}, 400
+
+            full_name = data['full_name'].strip()
+            email = data['email'].lower().strip()
+            account_type = data['account_type'].lower()
+
+            if not validate_email(email):
+                return {'error': 'Invalid email format'}, 400
+
+            if account_type not in ['user', 'provider']:
+                return {'error': 'Invalid account_type. Must be "user" or "provider"'}, 400
+
+            # Check if email is already registered
+            if account_type == 'user':
+                existing = User.query.filter_by(email=email).first()
+            else:
+                existing = Provider.query.filter_by(email=email).first()
+
+            if existing:
+                return {'error': 'Email already registered. Please login or use a different email.'}, 409
+
+            # Clean up old expired OTPs for account_verification
+            cutoff_time = datetime.utcnow() - timedelta(minutes=15)
+            PasswordOtp.query.filter(
+                PasswordOtp.account_id == 0,
+                PasswordOtp.account_type == account_type,
+                PasswordOtp.purpose == 'account_verification',
+                PasswordOtp.is_verified == False,
+                PasswordOtp.created_at < cutoff_time
+            ).delete(synchronize_session=False)
+
+            # Generate new OTP
+            otp_code = generate_otp(6)
+            expires_at = datetime.utcnow() + timedelta(minutes=15)
+
+            # Create OTP record with account_id=0 (placeholder for registration)
+            password_otp = PasswordOtp(
+                account_id=0,  # Placeholder since account doesn't exist yet
+                account_type=account_type,
+                otp_code=otp_code,
+                purpose='account_verification',
+                is_verified=False,
+                expires_at=expires_at
+            )
+
+            db.session.add(password_otp)
+            db.session.commit()
+
+            # Send OTP email
+            email_result = send_registration_otp_email(
+                email=email,
+                name=full_name,
+                otp_code=otp_code,
+                account_type=account_type
+            )
+
+            if not email_result['success']:
+                # Rollback OTP creation if email fails
+                db.session.delete(password_otp)
+                db.session.commit()
+                return {'error': f'Failed to send OTP email: {email_result["message"]}'}, 500
+
+            return {
+                'message': 'Registration OTP has been sent to your email',
+                'email': email
+            }, 200
+
+        except Exception as e:
+            db.session.rollback()
+            return {'error': str(e)}, 500
+
+@auth_ns.route('/user/register-verify-otp')
+class UserRegisterVerifyOTP(Resource):
+    @auth_ns.expect(verify_registration_otp_user_model)
+    @auth_ns.marshal_with(register_success_user_model, code=201)
+    @auth_ns.response(400, 'Validation Error', error_model)
+    @auth_ns.response(401, 'Invalid or Expired OTP', error_model)
+    @auth_ns.response(409, 'Email Already Registered', error_model)
+    @auth_ns.response(500, 'Internal Server Error', error_model)
+    @auth_ns.doc(description='''Verify OTP and complete user registration.
+
+**Required Fields:**
+- full_name: Full name of the user
+- email: Email address where OTP was sent
+- otp_code: OTP code received via email
+- password: Password (minimum 6 characters)
+- address: User address
+
+**Optional Fields:**
+- id_front: Front ID document URL/path
+- id_back: Back ID document URL/path
+
+**Sample Payload:**
+```json
+{
+  "full_name": "John Doe",
+  "email": "john@example.com",
+  "otp_code": "123456",
+  "password": "SecurePass123",
+  "address": "123 Main St, City",
+  "id_front": "https://example.com/id_front.jpg",
+  "id_back": "https://example.com/id_back.jpg"
+}
+```
+
+**Response:**
+- User account will be created
+- OTP will be marked as verified
+- Access token will be returned for immediate login
+
+**Security Features:**
+- OTP must be valid and not expired
+- OTP can only be used once
+- Email must not be already registered''')
+    def post(self):
+        """Verify OTP and complete user registration"""
+        if not DB_AVAILABLE:
+            return {'error': 'Database connection not available'}, 503
+
+        try:
+            data = request.get_json()
+
+            # Validation
+            required_fields = ['full_name', 'email', 'otp_code', 'password', 'address']
+            if not all(k in data for k in required_fields):
+                return {'error': f'Missing required fields: {", ".join(required_fields)}'}, 400
+
+            full_name = data['full_name'].strip()
+            email = data['email'].lower().strip()
+            otp_code = data['otp_code'].strip()
+            password = data['password']
+            address = data['address']
+
+            # Validate inputs
+            if not validate_email(email):
+                return {'error': 'Invalid email format'}, 400
+
+            if len(password) < 6:
+                return {'error': 'Password must be at least 6 characters'}, 400
+
+            # Check if email is already registered
+            if User.query.filter_by(email=email).first():
+                return {'error': 'Email already registered'}, 409
+
+            # Find valid OTP
+            password_otp = PasswordOtp.query.filter_by(
+                account_id=0,
+                account_type='user',
+                otp_code=otp_code,
+                purpose='account_verification',
+                is_verified=False
+            ).first()
+
+            if not password_otp:
+                return {'error': 'Invalid OTP code'}, 401
+
+            # Check if OTP is expired
+            if datetime.utcnow() > password_otp.expires_at:
+                return {'error': 'OTP has expired. Please request a new one'}, 401
+
+            # Create new user
+            user = User(
+                full_name=full_name,
+                email=email,
+                address=address,
+                id_front=data.get('id_front'),
+                id_back=data.get('id_back'),
+                status='for_verification'
+            )
+            user.set_password(password)
+
+            db.session.add(user)
+            db.session.flush()  # Get user ID
+
+            # Mark OTP as verified and update account_id
+            password_otp.is_verified = True
+            password_otp.account_id = user.id
+
+            db.session.commit()
+
+            # Create access token
+            access_token = create_access_token(identity=str(user.id), additional_claims={'user_type': 'user'})
+
+            return {
+                'message': 'User registered successfully',
+                'access_token': access_token,
+                'user': {
+                    'id': user.id,
+                    'full_name': user.full_name,
+                    'email': user.email,
+                    'address': user.address,
+                    'id_front': user.id_front,
+                    'id_back': user.id_back,
+                    'user_type': 'user'
+                }
+            }, 201
+
+        except Exception as e:
+            db.session.rollback()
+            return {'error': str(e)}, 500
+
+@auth_ns.route('/provider/register-verify-otp')
+class ProviderRegisterVerifyOTP(Resource):
+    @auth_ns.expect(verify_registration_otp_provider_model)
+    @auth_ns.marshal_with(register_success_provider_model, code=201)
+    @auth_ns.response(400, 'Validation Error', error_model)
+    @auth_ns.response(401, 'Invalid or Expired OTP', error_model)
+    @auth_ns.response(409, 'Email Already Registered', error_model)
+    @auth_ns.response(500, 'Internal Server Error', error_model)
+    @auth_ns.doc(description='''Verify OTP and complete provider registration.
+
+**Required Fields:**
+- full_name: Full name of the provider
+- email: Email address where OTP was sent
+- otp_code: OTP code received via email
+- password: Password (minimum 6 characters)
+- address: Provider address
+
+**Optional Fields:**
+- business_name: Name of the business
+- contact_number: Contact phone number
+- about: Description about the provider
+- bir_id_front: BIR ID front document URL/path
+- bir_id_back: BIR ID back document URL/path
+- business_permit: Business permit document URL/path
+- image_logo: Business logo image URL/path
+
+**Sample Payload:**
+```json
+{
+  "full_name": "Maria Santos",
+  "email": "provider@example.com",
+  "otp_code": "123456",
+  "password": "SecurePass123",
+  "address": "456 Business Ave, City",
+  "business_name": "My Business",
+  "contact_number": "+1234567890",
+  "about": "We provide quality services",
+  "bir_id_front": "https://example.com/bir_front.jpg",
+  "bir_id_back": "https://example.com/bir_back.jpg",
+  "business_permit": "https://example.com/permit.jpg",
+  "image_logo": "https://example.com/logo.jpg"
+}
+```
+
+**Response:**
+- Provider account will be created
+- OTP will be marked as verified
+- Access token will be returned for immediate login
+
+**Security Features:**
+- OTP must be valid and not expired
+- OTP can only be used once
+- Email must not be already registered''')
+    def post(self):
+        """Verify OTP and complete provider registration"""
+        if not DB_AVAILABLE:
+            return {'error': 'Database connection not available'}, 503
+
+        try:
+            data = request.get_json()
+
+            # Validation
+            required_fields = ['full_name', 'email', 'otp_code', 'password', 'address']
+            if not all(k in data for k in required_fields):
+                return {'error': f'Missing required fields: {", ".join(required_fields)}'}, 400
+
+            full_name = data['full_name'].strip()
+            email = data['email'].lower().strip()
+            otp_code = data['otp_code'].strip()
+            password = data['password']
+            address = data['address']
+
+            # Validate inputs
+            if not validate_email(email):
+                return {'error': 'Invalid email format'}, 400
+
+            if len(password) < 6:
+                return {'error': 'Password must be at least 6 characters'}, 400
+
+            # Check if email is already registered
+            if Provider.query.filter_by(email=email).first():
+                return {'error': 'Email already registered'}, 409
+
+            # Find valid OTP
+            password_otp = PasswordOtp.query.filter_by(
+                account_id=0,
+                account_type='provider',
+                otp_code=otp_code,
+                purpose='account_verification',
+                is_verified=False
+            ).first()
+
+            if not password_otp:
+                return {'error': 'Invalid OTP code'}, 401
+
+            # Check if OTP is expired
+            if datetime.utcnow() > password_otp.expires_at:
+                return {'error': 'OTP has expired. Please request a new one'}, 401
+
+            # Create new provider
+            provider = Provider(
+                business_name=data.get('business_name'),
+                full_name=full_name,
+                email=email,
+                contact_number=data.get('contact_number'),
+                address=address,
+                bir_id_front=data.get('bir_id_front'),
+                bir_id_back=data.get('bir_id_back'),
+                business_permit=data.get('business_permit'),
+                image_logo=data.get('image_logo'),
+                about=data.get('about'),
+                is_active=True,
+                status='for_verification'
+            )
+            provider.set_password(password)
+
+            db.session.add(provider)
+            db.session.flush()  # Get provider ID
+
+            # Mark OTP as verified and update account_id
+            password_otp.is_verified = True
+            password_otp.account_id = provider.id
+
+            db.session.commit()
+
+            # Create access token
+            access_token = create_access_token(identity=str(provider.id), additional_claims={'user_type': 'provider'})
+
+            return {
+                'message': 'Provider registered successfully',
+                'access_token': access_token,
+                'provider': {
+                    'id': provider.id,
+                    'business_name': provider.business_name,
+                    'full_name': provider.full_name,
+                    'email': provider.email,
+                    'contact_number': provider.contact_number,
+                    'address': provider.address,
+                    'bir_id_front': provider.bir_id_front,
+                    'bir_id_back': provider.bir_id_back,
+                    'business_permit': provider.business_permit,
+                    'image_logo': provider.image_logo,
+                    'about': provider.about,
+                    'is_active': provider.is_active,
+                    'user_type': 'provider'
+                }
+            }, 201
 
         except Exception as e:
             db.session.rollback()

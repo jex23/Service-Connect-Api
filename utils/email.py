@@ -930,6 +930,157 @@ def send_password_reset_otp_email(email, name, otp_code, account_type='user'):
     return send_email(email, subject, html_content, text_content)
 
 
+def send_registration_otp_email(email, name, otp_code, account_type='user'):
+    """
+    Send registration verification OTP email
+
+    Args:
+        email (str): Account email address
+        name (str): Account holder's full name
+        otp_code (str): OTP code for email verification
+        account_type (str): 'user' or 'provider'
+
+    Returns:
+        dict: {'success': bool, 'message': str}
+    """
+    subject = "Email Verification - Service Connect"
+
+    # HTML email template
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <style>
+            body {{
+                font-family: Arial, sans-serif;
+                line-height: 1.6;
+                color: #333;
+                max-width: 600px;
+                margin: 0 auto;
+                padding: 20px;
+            }}
+            .header {{
+                background-color: #FF9800;
+                color: white;
+                padding: 30px 20px;
+                text-align: center;
+                border-radius: 5px 5px 0 0;
+            }}
+            .content {{
+                background-color: #f9f9f9;
+                padding: 30px 20px;
+                border-left: 1px solid #ddd;
+                border-right: 1px solid #ddd;
+            }}
+            .footer {{
+                background-color: #333;
+                color: white;
+                padding: 20px;
+                text-align: center;
+                font-size: 12px;
+                border-radius: 0 0 5px 5px;
+            }}
+            .otp-box {{
+                background-color: #fff;
+                padding: 20px;
+                border: 2px dashed #FF9800;
+                border-radius: 5px;
+                text-align: center;
+                margin: 20px 0;
+            }}
+            .otp-code {{
+                font-size: 32px;
+                font-weight: bold;
+                color: #FF9800;
+                letter-spacing: 5px;
+                font-family: 'Courier New', monospace;
+            }}
+            .warning {{
+                background-color: #fff3cd;
+                padding: 15px;
+                border-left: 4px solid #ffc107;
+                margin: 20px 0;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <h1>Welcome to Service Connect!</h1>
+        </div>
+        <div class="content">
+            <p>Dear {name},</p>
+
+            <p>Thank you for registering as a {account_type} on Service Connect! To complete your registration, please verify your email address.</p>
+
+            <div class="otp-box">
+                <p style="margin: 0 0 10px 0; font-size: 14px; color: #666;">Your Email Verification Code</p>
+                <div class="otp-code">{otp_code}</div>
+                <p style="margin: 10px 0 0 0; font-size: 12px; color: #666;">This code will expire in 15 minutes</p>
+            </div>
+
+            <p><strong>How to verify your email:</strong></p>
+            <ol>
+                <li>Enter the OTP code above in the verification form</li>
+                <li>Complete your registration</li>
+                <li>Start using Service Connect!</li>
+            </ol>
+
+            <div class="warning">
+                <p><strong>Security Notice:</strong></p>
+                <ul style="margin: 5px 0;">
+                    <li>Do not share this OTP with anyone</li>
+                    <li>Service Connect staff will never ask for your OTP</li>
+                    <li>This OTP is valid for 15 minutes only</li>
+                </ul>
+            </div>
+
+            <p>If you did not create an account with Service Connect, please ignore this email.</p>
+
+            <p>Best regards,<br>
+            <strong>The Service Connect Team</strong></p>
+        </div>
+        <div class="footer">
+            <p>&copy; {datetime.now().year} Service Connect. All rights reserved.</p>
+            <p>This is an automated message, please do not reply to this email.</p>
+        </div>
+    </body>
+    </html>
+    """
+
+    # Plain text version
+    text_content = f"""
+    Dear {name},
+
+    Welcome to Service Connect!
+
+    Thank you for registering as a {account_type} on Service Connect! To complete your registration, please verify your email address.
+
+    Your Email Verification Code: {otp_code}
+
+    This code will expire in 15 minutes.
+
+    How to verify your email:
+    1. Enter the OTP code above in the verification form
+    2. Complete your registration
+    3. Start using Service Connect!
+
+    Security Notice:
+    - Do not share this OTP with anyone
+    - Service Connect staff will never ask for your OTP
+    - This OTP is valid for 15 minutes only
+
+    If you did not create an account with Service Connect, please ignore this email.
+
+    Best regards,
+    The Service Connect Team
+
+    © {datetime.now().year} Service Connect. All rights reserved.
+    This is an automated message, please do not reply to this email.
+    """
+
+    return send_email(email, subject, html_content, text_content)
+
+
 def send_booking_status_update_email(user_email, user_name, provider_name, service_title, booking_date, booking_time, old_status, new_status, booking_id):
     """
     Send booking status update notification email to user
